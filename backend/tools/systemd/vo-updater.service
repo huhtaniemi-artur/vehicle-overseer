@@ -1,0 +1,12 @@
+[Unit]
+Description=Vehicle Overseer updater (pull manifest + apply)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/vehicle-overseer-device/current
+EnvironmentFile=-/etc/vehicle-overseer/device.env
+EnvironmentFile=-/etc/vehicle-overseer/updater.env
+ExecStart=/usr/bin/python3 /opt/vehicle-overseer-device/current/vo_updater.py apply
+

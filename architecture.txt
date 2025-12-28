@@ -1,0 +1,84 @@
+Architecture overview (current implementation + clarified target behavior)
+
+- Purpose: Minimal web app to monitor targets, select a broker/server IP for a target, run backend-initiated actions, and manage remotely updatable target service deployments (per-device or per-group versions) while showing real-time status and logs.
+
+- Frontend (Web UI, mobile-first):
+  - Shows rectangular entries: green = online (recent updates), gray = offline (no update for ~10s).
+  - Stable ordering:
+    - New entries insert at the top of the online list.
+    - While online, entries keep their position (updates do not reorder the list).
+    - Offline entries are grouped and ordered by “went offline” time (newest offline first), derived from `offlineSince = lastUpdate + offlineTimeoutMs` so the ordering survives refresh.
+    - When an offline entry becomes online again, it appends to the bottom of the online list.
+  - Each entry shows: `VIN — device IP · <age>` where `<age>` updates continuously (1 Hz) without re-rendering the full list.
+    - For ages <60s show seconds; 60s+ show minutes.
+  - Update UX: entry flashes light-green on update.
+  - Selected IP is shown as a pressable rectangle/button:
+    - Tap opens an IP list popup; selecting an IP shows a confirmation popup.
+    - Tapping outside the popup cancels silently.
+    - “Apply” button is not used.
+    - Offline (gray) entries hide the selector and logs button.
+  - Action feedback:
+    - Progress `stage` is shown next to the selector as normal (non-red) text; it auto-clears after a short time on success.
+    - Errors are shown in red next to the selector and persist until cleared by a later successful action.
+    - The selected IP is kept visible even if an action fails (so the user can retry the same selection).
+  - Logs:
+    - Log view is a full-screen overlay (top of viewport) with VIN/IP header, close button, tap-outside close, swipe-to-close.
+    - Filter box highlights space-separated keywords in the stream.
+  - Settings: Backend URL input is hidden behind a settings button/popup; changing it forces reconnect to the new backend.
+
+- Backend (Node.js prototype):
+  - HTTP:
+    - `POST /api/ping` accepts `{vin, ip-address, state, data}` (vin required), refreshes device presence/state in memory and broadcasts a WebSocket delta.
+    - `POST /api/action/select` records the selected IP and starts an action by opening a new connection from backend → device (action endpoint). Backend emits stage updates while it performs each real step and finally emits success or error to the UI. Action results are not embedded in `/api/ping`.
+    - Updates (device pull):
+      - `GET /api/device/manifest?vin=VIN` returns a per-device manifest with `{version, artifact:{id,url,sha256}}`.
+      - `GET /api/device/artifacts/<artifact-id>` serves the package bytes.
+      - `GET /api/device/key?token=...` provisions an optional per-device transfer key (used by the updater for encrypted downloads).
+    - Updates (artifact distribution):
+      - Artifacts are stored by hash under `backend/data/artifacts/<sha256>` (artifact id = sha256).
+      - Versions are tags in SQLite (`versions.version`) mapped to an artifact id (`versions.artifact_id`) imported via `node backend/tools/import_version.js`.
+  - WebSocket:
+    - Shared UI stream `/ws` sends `init` (full snapshot on connect) and `entry` deltas (per VIN update).
+    - Per-vehicle log stream `/logs?vin=...` streams logs proxied from the device/service (in dev, the simulator acts as the device log source).
+  - Device endpoint resolution (current dev implementation):
+    - Host: the latest `ip-address` reported by the service.
+    - Ports: `data.actionPort` / `data.logPort` reported by the service (fallback: backend config `deviceActionPort` / `deviceLogPort`).
+  - Persistence:
+    - SQLite via `sql.js` stores update artifacts + versions, per-device update targets, device transfer keys, and bootstrap tokens.
+    - Live entry state (pings), action selections, and reported runtime versions stay in memory only.
+  - Auth (current implementation):
+    - Manifests can optionally include an RSA signature (`updateSigningKeyPath` / env `VO_UPDATE_SIGNING_KEY_PATH`) for device-side verification with a pinned public key.
+
+- Target device / service (current direction):
+  - Periodic status pings (POST), independent backend availability. (POST(s) are independent of actions)
+  - Actions are initiated by backend by opening a new connection to the device; device does not need a persistent connection to the backend.
+  - Device/service returns only final success or error for the action; backend stages come from backend execution steps and must not be time-invented (emit stages when each real step starts/finishes).
+  - Service implementation (current stub):
+    - `backend/tools/device_service.py` runs as a single-device process (intended for systemd).
+    - Waits for an IPv4 on a configured interface (default `tun0`) and reports that address as `ip-address` in `POST /api/ping`.
+    - Exposes TCP endpoints for backend→device connections:
+      - action endpoint: `<bind-host>:<action-port>` returns `{ok:true|false, error?}` (simulated)
+      - log endpoint: `<bind-host>:<log-port>` streams newline-delimited logs (simulated)
+    - Reports `actionPort` / `logPort` in the `data` section of `POST /api/ping` (so ports can be per-device).
+    - Reports version info in `data.version` (e.g. `serviceVersion`, `buildId`, `updaterVersion`).
+    - Note: on a single host, you can’t run two instances on the same `<bind-host>:<port>`; either bind to different IPs or use different ports.
+  - Software updates (current prototype implementation):
+    - Updater tool: `backend/tools/vo_updater.py` (intended to run as a systemd oneshot via timer).
+    - Update loop:
+      - Timer triggers updater → updater calls `GET /api/device/manifest?vin=...`
+      - Updater downloads artifact from `artifact.url`, verifies SHA256 (and optional RSA-signed manifest), unpacks it into `/opt/vehicle-overseer-device/releases/<version>/`,
+        flips `/opt/vehicle-overseer-device/current` symlink, then restarts `vehicle-overseer-device.service`.
+    - Systemd templates:
+      - Device service: `backend/tools/systemd/vehicle-overseer-device.service` (runs `/opt/vehicle-overseer-device/current/device_service.py`)
+      - Updater: `backend/tools/systemd/vo-updater.service` + `backend/tools/systemd/vo-updater.timer`
+    - Device ID: manifest pull uses `vin` as the stable device identifier; backend resolves per-device/per-group targeting from DB.
+    - Note: push-triggered updates via the existing backend→device action connection are not implemented yet (planned: “force update now” commands).
+    - Known gaps/risks:
+      - Backend currently auto-creates unknown VINs on first contact (`/api/ping` or manifest pull); production should authenticate device identity and restrict who can pull manifests.
+
+- Simulator (dev tool):
+  - Implemented in python: posts multiple vehicles at different intervals for UI testing and can emulate device-side action failure/success responses.
+  - Uses a Linux dummy interface (`vo-sim0`) with `10.0.0.0/24` addressing:
+    - `net-setup` (sudo) creates/configures the interface and adds all IPs.
+    - `net-cleanup` (sudo) removes the interface.
+    - `run` binds to the already-configured IPs (no sudo).

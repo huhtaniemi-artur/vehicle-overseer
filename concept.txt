@@ -1,0 +1,30 @@
+web-based minimalist app. webui uses current technology; likely webpack with node.js backend and react or vue on frontend, but use a simpler stack if it satisfies requirements.
+
+webui:
+- simple, touch-capable, mobile-friendly (primary use on phone).
+- shows dynamic items (rectangular balloons).
+-- press to expand; on release, present selection of one or more ip addresses.
+--- after ip selection, request confirmation (confirm or cancel; cancel also by tapping outside selection box).
+-- there are green balloons and gray balloons (gray listed after green); color indicated via lit corners.
+-- entries also show last-seen value: seconds since last update, then friendlier format for longer (e.g., 1m, 1h, days).
+-- shows currently selected ip address.
+--- selectable ip addresses come from an internal predefined list (config possibly opened by dragging page from very top edge downward, not just scrolling).
+- gray items do not present ip selection option.
+- on every update from remote machine (api receives json), entry briefly lights light-green then quickly fades.
+
+backend:
+- public api receives (post) json object {vin/name, ip-address, state, data}.
+-- each time an object is received, add a new webui entry in real time or update existing one identified by vin/name.
+--- new objects are added on top; each object times out after 10s, becomes gray, and moves below green items.
+- when target ip is selected and confirmed, run ssh script using entry's current ip. script runs remotely, takes selected ip as argument, modifies string "mqttserverip": "tcp://10.102.2.10:11883" in file /path/properties.json by replacing ip only, leaving other content unchanged. then reboot ford usrapp.service on target machine.
+
+service:
+- service sends name and ip every 3s: tun0 ip address; vin/name taken from properties.json; state read from mqtt topic or service logs (to be clarified); data empty. service depends on network.
+- example vin location:
+...
+ "vehicleProperties": {
+        "vin": "DEMO_01",
+...
+
+advanced:
+each entry has "usrapp.service" link that opens page with live stdout stream from target machine. log is retrieved from machine over ssh with "sudo -S journalctl -xefu usrapp --output=cat" command by backend and transmitted to users over websocket to client webui.

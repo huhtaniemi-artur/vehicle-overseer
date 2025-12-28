@@ -1,0 +1,31 @@
+# Agent/IDE
+AGENT_RULES.md
+.codex/
+.vscode/
+
+# Backups
+bak.1/
+snapshots/
+architecture.bak.md
+architecture.bak.txt
+*.bak.*
+*~
+
+# Runtime/build outputs
+backend/data/
+backend/node_modules/
+frontend/node_modules/
+**/__pycache__/
+*.pyc
+*.pyo
+*.log
+*.sqlite
+*.sqlite*
+*.db
+*.tmp
+*.swp
+*.swo
+.DS_Store
+
+# Local config
+backend/config.json

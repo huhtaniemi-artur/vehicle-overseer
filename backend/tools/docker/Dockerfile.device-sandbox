@@ -1,0 +1,17 @@
+FROM python:3
+
+ENV container=docker
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    iproute2 \
+    systemd \
+    systemd-sysv \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+# Create common directories but do not install any project code/config.
+RUN mkdir -p /opt/vehicle-overseer-device /etc/vehicle-overseer
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

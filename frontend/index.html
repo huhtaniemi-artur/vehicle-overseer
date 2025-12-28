@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vehicle Overseer</title>
+  <style>
+    :root { --green: #1fa97a; --gray: #b9c0cc; --red: #d14343; --bg: #f5f7fa; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: var(--bg); color: #111; }
+    .bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.12); font-size: 14px; }
+    .pill span { font-weight: 600; }
+    .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); margin-bottom: 12px; }
+    .entry { border: 1px solid #e4e7ed; border-left: 6px solid transparent; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+    .entry.online { border-left-color: var(--green); }
+    .entry.offline { border-left-color: var(--gray); opacity: 0.7; }
+    .entry.error { border-left-color: var(--red); }
+    .row { display: flex; justify-content: space-between; gap: 8px; }
+    .muted { color: #6b7280; font-size: 14px; }
+    button { padding: 8px 12px; border-radius: 8px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; }
+    button.primary { background: var(--green); color: #fff; border: none; }
+    .pill-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px; border: 1px solid #d1d5db; background: #eef2f7; cursor: pointer; }
+    .pill-btn:hover { background: #e2e8f0; }
+    select { padding: 8px; border-radius: 8px; border: 1px solid #d1d5db; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; overflow: auto; max-height: 240px; }
+    input[type="text"] { padding: 8px; border-radius: 8px; border: 1px solid #d1d5db; min-width: 200px; }
+    .flash { animation: flashAnim 0.5s ease-out; }
+    @keyframes flashAnim {
+      0% { background-color: rgba(31,169,122,0.25); }
+      100% { background-color: transparent; }
+    }
+    .error-pill { background: rgba(209,67,67,0.12); color: var(--red); padding: 4px 8px; border-radius: 8px; display: inline-block; margin-top: 4px; }
+    /* Log overlay */
+    #log-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+      z-index: 999;
+    }
+    #log-panel {
+      background: #0b1020;
+      color: #e2e8f0;
+      width: min(960px, 100%);
+      max-height: 90vh;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      touch-action: pan-y;
+    }
+    #log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    #log-header .title { font-weight: 600; }
+    #log-filter {
+      padding: 10px 14px;
+      border: none;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: #e2e8f0;
+      outline: none;
+      font-size: 14px;
+    }
+    #log-content {
+      padding: 12px 16px;
+      overflow: auto;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    mark { background: #f97316; color: #0b1020; padding: 0 2px; border-radius: 2px; }
+    /* Settings overlay */
+    #settings-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+      z-index: 997;
+    }
+    #settings-panel {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+      width: min(520px, 100%);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    /* Selection overlay */
+    #select-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+      z-index: 998;
+    }
+    #select-panel {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+      width: min(420px, 100%);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #select-list .select-item { display: flex; align-items: center; gap: 8px; }
+    #select-list .ip-choice { width: 100%; text-align: left; }
+    #select-list .ip-choice.known { background: #fff7d6; }
+    #select-list .ip-choice.chosen { border: 2px solid #f59e0b; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1 style="margin:0;">Vehicle Overseer</h1>
+    <div style="display:flex; gap:10px; align-items:center;">
+      <div class="pill" id="status-pill">Online: 0 · Offline: 0</div>
+      <button id="settings-btn">Settings</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="entries"></div>
+  </div>
+
+  <div id="log-overlay">
+    <div id="log-panel">
+      <div id="log-header">
+        <div class="title" id="log-title">Logs</div>
+        <button id="close-log-btn">Close</button>
+      </div>
+      <input id="log-filter" type="text" placeholder="Filter (space-separated keywords)" />
+      <div id="log-content"></div>
+    </div>
+  </div>
+
+  <div id="select-overlay">
+    <div id="select-panel">
+      <div id="select-list"></div>
+    </div>
+  </div>
+
+  <div id="settings-overlay">
+    <div id="settings-panel">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <button id="set-backend-btn" class="primary">Save</button>
+        <div style="font-weight:600;">Settings</div>
+        <button id="settings-close">Close</button>
+      </div>
+      <div class="muted">Backend base URL</div>
+      <input id="backend-input" type="text" placeholder="http://localhost:3100" />
+    </div>
+  </div>
+
+  <script>
+    function deriveBackendBase() {
+      const params = new URLSearchParams(location.search);
+      const fromQuery = params.get('backend');
+      if (fromQuery) {
+        localStorage.setItem('vo_backend', fromQuery);
+        return fromQuery;
+      }
+      const stored = localStorage.getItem('vo_backend');
+      if (stored) return stored;
+      return window.location.origin;
+    }
+
+    let backendBase = deriveBackendBase();
+    const entriesEl = document.getElementById('entries');
+    const statusEl = document.getElementById('status-pill');
+    const overlay = document.getElementById('log-overlay');
+    const logPanel = document.getElementById('log-panel');
+    const logsEl = document.getElementById('log-content');
+    const logTitle = document.getElementById('log-title');
+    const closeLogBtn = document.getElementById('close-log-btn');
+    const logFilter = document.getElementById('log-filter');
+    const settingsBtn = document.getElementById('settings-btn');
+    const settingsOverlay = document.getElementById('settings-overlay');
+    const settingsClose = document.getElementById('settings-close');
+    const backendInput = document.getElementById('backend-input');
+    const setBackendBtn = document.getElementById('set-backend-btn');
+    const selectOverlay = document.getElementById('select-overlay');
+    const selectPanel = document.getElementById('select-panel');
+    const selectList = document.getElementById('select-list');
+    let config = { ipList: [] };
+    let entries = new Map();
+    let entryNodes = new Map();
+    let logSocket = null;
+    let selectedVin = null;
+    let orderCounter = 0;
+    let selectingVin = null;
+    let pendingIp = null;
+    let updatesSocket = null;
+    const onlineContainer = document.createElement('div');
+    const offlineContainer = document.createElement('div');
+    entriesEl.appendChild(onlineContainer);
+    entriesEl.appendChild(offlineContainer);
+
+    async function fetchJson(path) {
+      const url = new URL(path, backendBase);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    function updateStatus() {
+      let online = 0, offline = 0;
+      entries.forEach(e => {
+        if (e.status === 'online') online++; else offline++;
+      });
+      statusEl.textContent = `Online: ${online} · Offline: ${offline}`;
+    }
+
+    function formatAge(ms) {
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60) return `${sec}s`;
+      const min = Math.floor(sec / 60);
+      return `${min}m`;
+    }
+
+    function updateLastSeenTick() {
+      const now = Date.now();
+      entryNodes.forEach(({ lastSeenEl }, vin) => {
+        const e = entries.get(vin);
+        if (!e) return;
+        lastSeenEl.textContent = formatAge(now - e.lastUpdate);
+      });
+    }
+    setInterval(updateLastSeenTick, 1000);
+
+    function buildEntryNode(entry) {
+      const div = document.createElement('div');
+      const classes = ['entry', entry.status];
+      div.className = classes.join(' ');
+
+      const headerRow = document.createElement('div');
+      headerRow.className = 'row';
+      const headerLeft = document.createElement('div');
+      const title = document.createElement('div');
+      title.innerHTML = `<strong>${entry.vin}</strong> — ${entry.ip || 'n/a'} · `;
+      const lastSeenEl = document.createElement('span');
+      lastSeenEl.className = 'muted';
+      title.appendChild(lastSeenEl);
+      headerLeft.appendChild(title);
+      headerRow.appendChild(headerLeft);
+      div.appendChild(headerRow);
+
+      const controls = document.createElement('div');
+      controls.className = 'row';
+      const ipBtn = document.createElement('button');
+      ipBtn.className = 'pill-btn';
+      const logBtn = document.createElement('button');
+      logBtn.textContent = 'logs';
+      const statusEl = document.createElement('span');
+      controls.appendChild(ipBtn);
+      controls.appendChild(logBtn);
+      div.appendChild(controls);
+
+      // status row below controls
+      const statusRow = document.createElement('div');
+      statusRow.className = 'row';
+      statusRow.style.marginTop = '6px';
+      statusRow.appendChild(statusEl);
+      div.appendChild(statusRow);
+
+      return { root: div, lastSeenEl, statusEl, ipBtn, logBtn, controls, titleEl: title };
+    }
+
+    function applyEntryToNode(entry, node) {
+      node.root.className = `entry ${entry.status}${entry.flash ? ' flash' : ''}`;
+      node.titleEl.innerHTML = `<strong>${entry.vin}</strong> — ${entry.ip || 'n/a'} · `;
+      node.titleEl.appendChild(node.lastSeenEl);
+      node.lastSeenEl.textContent = `${Math.round((Date.now() - entry.lastUpdate)/1000)}s`;
+      const stageMsg = entry.stage || '';
+      node.ipBtn.textContent = entry.selectedIp || 'select mqtt';
+      node.ipBtn.disabled = false;
+      node.ipBtn.onclick = () => openSelector(entry.vin);
+      node.logBtn.onclick = () => connectLogs(entry.vin);
+      const isOnline = entry.status === 'online';
+      node.ipBtn.style.display = isOnline ? 'inline-block' : 'none';
+      node.logBtn.style.display = isOnline ? 'inline-block' : 'none';
+      node.controls.style.display = isOnline ? 'flex' : 'none';
+      if (entry.lastError) {
+        node.statusEl.innerHTML = `<span class="error-pill" style="margin-left:8px;">${entry.lastError}</span>`;
+      } else if (stageMsg) {
+        node.statusEl.textContent = stageMsg;
+      } else {
+        node.statusEl.textContent = '';
+      }
+    }
+
+    function insertOfflineNode(entry, node) {
+      const targetTs = entry.offlineSince || entry.lastUpdate || Date.now();
+      let inserted = false;
+      for (const child of offlineContainer.children) {
+        const vin = child.dataset?.vin;
+        const existing = vin ? entries.get(vin) : null;
+        const ts = existing?.offlineSince || existing?.lastUpdate || 0;
+        if (ts < targetTs) {
+          offlineContainer.insertBefore(node.root, child);
+          inserted = true;
+          break;
+        }
+      }
+      if (!inserted) offlineContainer.appendChild(node.root);
+    }
+
+    function upsertEntry(entry, { initialInsert = false } = {}) {
+      const hadNode = entryNodes.has(entry.vin);
+      let node = entryNodes.get(entry.vin);
+      if (!node) {
+        node = buildEntryNode(entry);
+        node.root.dataset.vin = entry.vin;
+        entryNodes.set(entry.vin, node);
+      }
+      applyEntryToNode(entry, node);
+      const currentParent = node.root.parentElement;
+      if (entry.status === 'online') {
+        if (currentParent !== onlineContainer) {
+          if (currentParent) currentParent.removeChild(node.root);
+          if (initialInsert) {
+            onlineContainer.appendChild(node.root);
+          } else if (!hadNode) {
+            onlineContainer.insertBefore(node.root, onlineContainer.firstChild);
+          } else {
+            // offline -> online re-append to bottom
+            onlineContainer.appendChild(node.root);
+          }
+        }
+      } else {
+        if (currentParent !== offlineContainer) {
+          if (currentParent) currentParent.removeChild(node.root);
+          insertOfflineNode(entry, node);
+        }
+      }
+      updateStatus();
+    }
+
+    async function sendSelection(vin, ip) {
+      await fetch(new URL('/api/action/select', backendBase), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ vin, ip })
+      });
+    }
+
+    function highlight(text, terms) {
+      if (!terms.length) return text;
+      const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const regex = new RegExp(`(${escaped.join('|')})`, 'gi');
+      return text.replace(regex, '<mark>$1</mark>');
+    }
+
+    function connectLogs(vin) {
+      if (logSocket) logSocket.close();
+      logsEl.innerHTML = '';
+      selectedVin = vin;
+      const base = new URL(backendBase);
+      const proto = base.protocol === 'https:' ? 'wss:' : 'ws:';
+      logSocket = new WebSocket(`${proto}//${base.host}/logs?vin=${encodeURIComponent(vin)}`);
+      logSocket.onmessage = (evt) => {
+        const terms = logFilter.value.trim() ? logFilter.value.trim().split(' ') : [];
+        const line = highlight(evt.data, terms);
+        logsEl.innerHTML += line + '<br />';
+        logsEl.scrollTop = logsEl.scrollHeight;
+      };
+      logSocket.onclose = () => {
+        logsEl.innerHTML += '<div class="muted">[log stream closed]</div>';
+      };
+      overlay.style.display = 'flex';
+      const entry = entries.get(vin);
+      logTitle.textContent = `${vin} — ${entry?.ip || 'n/a'}`;
+    }
+
+    function connectUpdates() {
+      if (updatesSocket) {
+        updatesSocket.onclose = null;
+        updatesSocket.onerror = null;
+        updatesSocket.close();
+      }
+      const base = new URL(backendBase);
+      const proto = base.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${base.host}/ws`);
+      updatesSocket = ws;
+      ws.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'init') {
+          config = msg.config;
+          entries.clear();
+          orderCounter = 0;
+          entryNodes.forEach(({ root }) => root.remove());
+          entryNodes.clear();
+          onlineContainer.innerHTML = '';
+          offlineContainer.innerHTML = '';
+          [...msg.entries]
+            .sort((a, b) => (b.lastUpdate || 0) - (a.lastUpdate || 0))
+            .forEach(e => {
+            e.order = orderCounter++;
+            entries.set(e.vin, e);
+            e.offlineSince = e.status === 'offline' ? (e.lastUpdate + (config.offlineTimeoutMs || 10_000)) : null;
+            upsertEntry(e, { initialInsert: true });
+          });
+        }
+        if (msg.type === 'entry') {
+          const existing = entries.get(msg.entry.vin);
+          const prevStatus = existing ? existing.status : null;
+          const offlineToOnline = prevStatus === 'offline' && msg.entry.status === 'online';
+          const becomingOffline = msg.entry.status === 'offline' && prevStatus !== 'offline';
+          const stayingOffline = msg.entry.status === 'offline' && prevStatus === 'offline';
+          const offlineThresholdMs = config.offlineTimeoutMs || 10_000;
+          const offlineSince = becomingOffline
+            ? (msg.entry.lastUpdate + offlineThresholdMs)
+            : stayingOffline
+              ? (existing?.offlineSince ?? (msg.entry.lastUpdate + offlineThresholdMs))
+              : null;
+          const order = existing
+            ? (offlineToOnline ? orderCounter++ : existing.order)
+            : orderCounter++;
+
+          // Preserve action fields unless explicitly provided in payload (allows backend to clear via null).
+          const hasLastError = Object.prototype.hasOwnProperty.call(msg.entry, 'lastError');
+          const lastError = hasLastError ? msg.entry.lastError : (existing ? existing.lastError : null);
+          const hasStage = Object.prototype.hasOwnProperty.call(msg.entry, 'stage');
+          const stage = hasStage ? msg.entry.stage : (existing ? existing.stage : null);
+
+          const merged = { ...existing, ...msg.entry, order, offlineSince, lastError, stage, flash: true };
+          entries.set(msg.entry.vin, merged);
+          setTimeout(() => {
+            const e = entries.get(msg.entry.vin);
+            if (e) { e.flash = false; upsertEntry(e); }
+          }, 500);
+          upsertEntry(merged);
+        }
+      };
+      ws.onclose = () => {
+        setTimeout(connectUpdates, 2000);
+      };
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+
+    async function init() {
+      backendInput.value = backendBase;
+      const cfg = await fetchJson('/api/config');
+      config = cfg;
+      const { entries: list } = await fetchJson('/api/entries');
+      entries.clear();
+      orderCounter = 0;
+      entryNodes.forEach(({ root }) => root.remove());
+      entryNodes.clear();
+      onlineContainer.innerHTML = '';
+      offlineContainer.innerHTML = '';
+      [...list]
+        .sort((a, b) => (b.lastUpdate || 0) - (a.lastUpdate || 0))
+        .forEach(e => {
+        e.order = orderCounter++;
+        e.offlineSince = e.status === 'offline' ? (e.lastUpdate + (config.offlineTimeoutMs || 10_000)) : null;
+        entries.set(e.vin, e);
+        upsertEntry(e, { initialInsert: true });
+      });
+      connectUpdates();
+    }
+
+    function closeLogs() {
+      overlay.style.display = 'none';
+      if (logSocket) logSocket.close();
+      logSocket = null;
+      selectedVin = null;
+      logsEl.innerHTML = '';
+    }
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeLogs();
+    });
+    closeLogBtn.onclick = closeLogs;
+
+    // Swipe left/right to close
+    let touchStartX = null;
+    overlay.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+    });
+    overlay.addEventListener('touchend', (e) => {
+      if (touchStartX === null) return;
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (dx < -50 || dx > 50) closeLogs();
+      touchStartX = null;
+    });
+
+    logFilter.addEventListener('input', () => {
+      // Reapply highlight to raw lines
+      const terms = logFilter.value.trim() ? logFilter.value.trim().split(' ') : [];
+      const lines = logsEl.innerText.split('\n');
+      logsEl.innerHTML = lines.map(line => highlight(line, terms)).join('<br />');
+      logsEl.scrollTop = logsEl.scrollHeight;
+    });
+
+    function closeSelector() {
+      selectingVin = null;
+      pendingIp = null;
+      selectOverlay.style.display = 'none';
+      selectList.innerHTML = '';
+    }
+
+    function openSelector(vin) {
+      selectingVin = vin;
+      pendingIp = null;
+      selectList.innerHTML = '';
+      const entry = entries.get(vin);
+      const currentSelected = entry?.selectedIp || null;
+
+      config.ipList.forEach(ip => {
+        const row = document.createElement('div');
+        row.className = 'select-item';
+        const btn = document.createElement('button');
+        btn.className = 'ip-choice';
+        btn.textContent = ip;
+        if (ip === currentSelected) btn.classList.add('known');
+        const confirm = document.createElement('button');
+        confirm.textContent = 'Confirm';
+        confirm.style.display = 'none';
+        confirm.onclick = () => {
+          if (selectingVin && pendingIp) {
+            sendSelection(selectingVin, pendingIp);
+          }
+          closeSelector();
+        };
+        btn.onclick = () => {
+          pendingIp = ip;
+          // reset highlights
+          Array.from(selectList.querySelectorAll('.ip-choice')).forEach(b => b.classList.remove('chosen'));
+          Array.from(selectList.querySelectorAll('.select-item button:nth-child(2)')).forEach(c => c.style.display = 'none');
+          btn.classList.add('chosen');
+          confirm.style.display = 'inline-block';
+        };
+        row.appendChild(btn);
+        row.appendChild(confirm);
+        selectList.appendChild(row);
+      });
+      selectOverlay.style.display = 'flex';
+    }
+
+    selectOverlay.addEventListener('click', (e) => {
+      if (e.target === selectOverlay) closeSelector();
+    });
+    // Swipe to close
+    let selTouch = null;
+    selectOverlay.addEventListener('touchstart', (e) => { selTouch = e.touches[0].clientX; });
+    selectOverlay.addEventListener('touchend', (e) => {
+      if (selTouch === null) return;
+      const dx = e.changedTouches[0].clientX - selTouch;
+      if (dx < -50 || dx > 50) closeSelector();
+      selTouch = null;
+    });
+
+    setBackendBtn.onclick = () => {
+      const val = backendInput.value.trim();
+      if (!val) return;
+      const changed = val !== backendBase;
+      backendBase = val;
+      localStorage.setItem('vo_backend', val);
+      settingsOverlay.style.display = 'none';
+      if (changed) {
+        entries.clear();
+        entryNodes.forEach(({ root }) => root.remove());
+        entryNodes.clear();
+        onlineContainer.innerHTML = '';
+        offlineContainer.innerHTML = '';
+        orderCounter = 0;
+        statusEl.textContent = 'Connecting...';
+        if (updatesSocket) {
+          updatesSocket.onclose = null;
+          updatesSocket.onerror = null;
+          updatesSocket.close();
+          updatesSocket = null;
+        }
+        if (logSocket) {
+          logSocket.close();
+          logSocket = null;
+          logsEl.innerHTML = '';
+        }
+        init().catch(err => {
+          console.error(err);
+          statusEl.textContent = 'Failed to load backend';
+        });
+      }
+    };
+
+    settingsBtn.onclick = () => {
+      settingsOverlay.style.display = 'flex';
+    };
+
+    settingsClose.onclick = () => {
+      settingsOverlay.style.display = 'none';
+    };
+
+    settingsOverlay.addEventListener('click', (e) => {
+      if (e.target === settingsOverlay) settingsOverlay.style.display = 'none';
+    });
+    init().catch(err => {
+      console.error(err);
+      statusEl.textContent = 'Failed to load backend';
+    });
+  </script>
+</body>
+</html>

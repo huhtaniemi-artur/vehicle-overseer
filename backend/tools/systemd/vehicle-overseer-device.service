@@ -1,0 +1,16 @@
+[Unit]
+Description=Vehicle Overseer (simulated device)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vehicle-overseer-device/current
+EnvironmentFile=/etc/vehicle-overseer/device.env
+ExecStart=/usr/bin/python3 /opt/vehicle-overseer-device/current/device_service.py run --backend ${VO_BACKEND} --vin ${VO_VIN} --report-iface ${VO_REPORT_IFACE} --wait-timeout-s ${VO_WAIT_TIMEOUT_S} --action-port ${VO_ACTION_PORT} --log-port ${VO_LOG_PORT} --bind-host ${VO_BIND_HOST}
+Restart=always
+RestartSec=3
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
