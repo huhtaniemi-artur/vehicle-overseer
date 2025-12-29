@@ -112,6 +112,10 @@ else
 fi
 
 log "run updater (initial install)"
-/usr/bin/python3 "$BOOTSTRAP_DIR/vo_updater.py" apply
+/usr/bin/python3 "$BOOTSTRAP_DIR/vo_updater.py" apply \
+  --backend "$BACKEND_BASE" \
+  --vin "$VIN" \
+  --artifact-key-path "$ENV_DIR/artifact.key" \
+  --device-uid-path "$ENV_DIR/device.uid"
 
 log "ok"

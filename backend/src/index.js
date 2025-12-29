@@ -88,6 +88,16 @@ async function main() {
     return row;
   };
 
+  const getArtifactById = (artifactId) => getRow(
+    'SELECT id, sha256, filename, size_bytes FROM artifacts WHERE id = $id LIMIT 1',
+    { $id: artifactId }
+  );
+
+  const getDeviceKeyByUid = (deviceUid) => getRow(
+    'SELECT key_b64, key_id FROM device_keys WHERE device_uid = $uid LIMIT 1',
+    { $uid: deviceUid }
+  );
+
   const getRows = (sql, params = {}) => {
     const stmt = db.prepare(sql);
     stmt.bind(params);
@@ -703,10 +713,7 @@ async function main() {
 	          return res.end(JSON.stringify({ error: 'invalid artifact path' }));
 	        }
 	        const artifactId = safeName(decodeURIComponent(parts[3]), 'artifactId');
-	        const artifact = getRow(
-	          'SELECT id, sha256, filename, size_bytes FROM artifacts WHERE id = $id LIMIT 1',
-	          { $id: artifactId }
-	        );
+	        const artifact = getArtifactById(artifactId);
 	        if (!artifact) {
 	          res.writeHead(404, { 'Content-Type': 'application/json' });
 	          return res.end(JSON.stringify({ error: 'artifact not found' }));
@@ -720,30 +727,33 @@ async function main() {
 
 	        const searchParams = new url.URL(req.url, `http://${req.headers.host}`).searchParams;
 	        const deviceUid = searchParams.get('uid') || searchParams.get('deviceUid') || searchParams.get('device_uid');
-	        const keyRow = deviceUid
-	          ? getRow('SELECT key_b64, key_id FROM device_keys WHERE device_uid = $uid', { $uid: deviceUid })
-	          : null;
-	        const maybeKey = keyRow?.key_b64 ? Buffer.from(String(keyRow.key_b64), 'base64') : null;
-	        const canEncrypt = Boolean(deviceUid && maybeKey && maybeKey.length === 32);
+	        if (!deviceUid) {
+	          res.writeHead(403, { 'Content-Type': 'application/json' });
+	          return res.end(JSON.stringify({ error: 'uid required' }));
+	        }
+	        const keyRow = getDeviceKeyByUid(deviceUid);
+	        if (!keyRow?.key_b64) {
+	          res.writeHead(403, { 'Content-Type': 'application/json' });
+	          return res.end(JSON.stringify({ error: 'key not found' }));
+	        }
+	        const maybeKey = Buffer.from(String(keyRow.key_b64), 'base64');
+	        if (maybeKey.length !== 32) {
+	          res.writeHead(500, { 'Content-Type': 'application/json' });
+	          return res.end(JSON.stringify({ error: 'invalid key length' }));
+	        }
+	        const ivHex = crypto.randomBytes(16).toString('hex');
 
 	        res.writeHead(200, {
 	          'Content-Type': 'application/octet-stream',
 	          'Content-Length': artifact.size_bytes,
 	          'X-Artifact-Sha256': artifact.sha256,
-	          ...(canEncrypt ? {
-	            'X-VO-Enc': 'aes-256-ctr',
-	            'X-VO-Iv': crypto.randomBytes(16).toString('hex'),
-	            ...(keyRow?.key_id ? { 'X-VO-KeyId': String(keyRow.key_id) } : {})
-	          } : {})
+	          'X-VO-Enc': 'aes-256-ctr',
+	          'X-VO-Iv': ivHex,
+	          ...(keyRow?.key_id ? { 'X-VO-KeyId': String(keyRow.key_id) } : {})
 	        });
 
 	        const stream = fs.createReadStream(filePath);
-	        if (!canEncrypt) {
-	          stream.pipe(res);
-	          return;
-	        }
-	        const ivHex = res.getHeader('X-VO-Iv');
-	        const iv = Buffer.from(String(ivHex), 'hex');
+	        const iv = Buffer.from(ivHex, 'hex');
 	        const cipher = crypto.createCipheriv('aes-256-ctr', maybeKey, iv);
 	        stream.pipe(cipher).pipe(res);
 	        return;

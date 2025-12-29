@@ -52,13 +52,13 @@ If no artifacts exist, `GET /api/device/manifest` returns `404`.
 - Artifact integrity is checked by SHA256.
 - Manifest authentication is optional via RSA signatures:
   - Backend signs using `updateSigningKeyPath` (private key, PEM).
-- Optional in-transfer encryption:
+- In-transfer encryption (always enabled):
   - Setup fetches a per-device base64 key from `GET /api/device/key?token=...`.
   - Response format is plain text: first line `deviceUid`, second line `keyB64`.
   - Token creation: use `POST /api/bootstrap-token` (localhost only) to mint a token, then call `/api/srvcsetup?vin=...&token=...`.
   - Optional: mint a token explicitly from the backend (localhost only):
     - `curl -sS -X POST http://127.0.0.1:3100/api/bootstrap-token -H 'Content-Type: application/json' -d '{"kind":"dev"}'`
-- The updater uses `VO_ARTIFACT_KEY_PATH` and requests encrypted downloads by adding `?uid=DEVICE_UID` to the artifact URL; backend responds with `X-VO-Enc: aes-256-ctr` + `X-VO-Iv: ...`.
+- The updater requires `VO_ARTIFACT_KEY_PATH` and requests encrypted downloads by adding `?uid=DEVICE_UID` to the artifact URL; backend responds with `X-VO-Enc: aes-256-ctr` + `X-VO-Iv: ...`.
 - Device UID can be provided via `VO_DEVICE_UID` or a file at `/etc/vehicle-overseer/device.uid` (override with `VO_DEVICE_UID_PATH`).
 - The updater installs/updates systemd unit files if they are present in the release artifact and enables `vo-updater.timer`.
 - Device can report per-device ports in `POST /api/ping` (`data.actionPort`, `data.logPort`); backend prefers these over global defaults when present.

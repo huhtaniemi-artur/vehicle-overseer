@@ -30,6 +30,9 @@ import time
 import urllib.parse
 import urllib.request
 
+def log(msg: str) -> None:
+    print(f"[updater] {msg}")
+
 
 def _env(name: str, default: str | None = None) -> str | None:
     v = os.environ.get(name)
@@ -151,11 +154,14 @@ def _safe_extract_tar(tar_path: str, dest_dir: str) -> None:
                 raise ValueError(f"unsafe tar member (links not allowed): {name!r}")
             if member.isdev():
                 raise ValueError(f"unsafe tar member (device file not allowed): {name!r}")
-        tar.extractall(dest_dir)
+        try:
+            tar.extractall(dest_dir, filter="data")
+        except TypeError:
+            tar.extractall(dest_dir)
 
 
-def _systemctl(args: list[str]) -> None:
-    subprocess.run(["systemctl", *args], check=True)
+def _systemctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["systemctl", *args], check=True, text=True, capture_output=True)
 
 
 def _switch_symlink_atomic(link_path: str, target_path: str) -> str | None:
@@ -222,6 +228,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
     vin = args.vin
     install_root = args.install_root
     artifact_key = _load_artifact_key(args.artifact_key_path or _env("VO_ARTIFACT_KEY_PATH"))
+    if artifact_key is None:
+        raise ValueError("artifact key required (artifacts are always encrypted)")
+    log(f"backend={backend} vin={vin} installRoot={install_root}")
     uid_path = (
         args.device_uid_path
         or _env("VO_DEVICE_UID_PATH")
@@ -230,10 +239,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
     device_uid = args.device_uid or _env("VO_DEVICE_UID") or _read_text(uid_path)
     if artifact_key is not None and not device_uid:
         raise ValueError("artifact key configured but no VO_DEVICE_UID provided")
+    log(f"deviceUidPath={uid_path}")
 
     os.makedirs(os.path.join(install_root, "releases"), exist_ok=True)
 
     manifest_url = f"{backend}/api/device/manifest?vin={vin}"
+    log(f"fetch manifest: {manifest_url}")
     manifest = _http_get_json(manifest_url)
 
     version = manifest.get("version")
@@ -249,23 +260,23 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     current_version = _read_text(os.path.join(install_root, "current", "VERSION"))
     if current_version == version and not args.force:
+        log(f"already on version {version}; skipping")
         return 0
 
     full_artifact_url = urllib.parse.urljoin(f"{backend}/", artifact_url.lstrip("/"))
-    if artifact_key is not None:
-        sep = "&" if "?" in full_artifact_url else "?"
-        full_artifact_url = f"{full_artifact_url}{sep}uid={device_uid}"
+    sep = "&" if "?" in full_artifact_url else "?"
+    full_artifact_url = f"{full_artifact_url}{sep}uid={device_uid}"
+    log(f"download artifact: {full_artifact_url}")
     blob, headers = _http_get_bytes(full_artifact_url)
     enc = headers.get("X-VO-Enc") or headers.get("x-vo-enc")
-    if enc:
-        if artifact_key is None:
-            raise ValueError("encrypted artifact received but no VO_ARTIFACT_KEY_PATH configured")
-        if enc.strip().lower() != "aes-256-ctr":
-            raise ValueError(f"unsupported artifact encryption: {enc!r}")
-        iv = headers.get("X-VO-Iv") or headers.get("x-vo-iv")
-        if not iv:
-            raise ValueError("encrypted artifact missing X-VO-Iv")
-        blob = _decrypt_aes_256_ctr(blob, artifact_key, iv.strip())
+    if not enc:
+        raise ValueError("artifact response not encrypted")
+    if enc.strip().lower() != "aes-256-ctr":
+        raise ValueError(f"unsupported artifact encryption: {enc!r}")
+    iv = headers.get("X-VO-Iv") or headers.get("x-vo-iv")
+    if not iv:
+        raise ValueError("encrypted artifact missing X-VO-Iv")
+    blob = _decrypt_aes_256_ctr(blob, artifact_key, iv.strip())
     got_sha256 = _sha256_hex(blob)
     if got_sha256 != artifact_sha256:
         raise ValueError(f"artifact sha256 mismatch: expected {artifact_sha256}, got {got_sha256}")
@@ -279,22 +290,35 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
         extract_dir = os.path.join(tmp_dir, "extract")
         os.makedirs(extract_dir, exist_ok=True)
+        log("extract artifact")
         _safe_extract_tar(tar_path, extract_dir)
 
         if not args.dry_run:
             if os.path.exists(release_dir):
                 shutil.rmtree(release_dir)
+            log(f"install release: {release_dir}")
             shutil.copytree(extract_dir, release_dir)
             if not _read_text(os.path.join(release_dir, "VERSION")):
                 _write_text(os.path.join(release_dir, "VERSION"), version + "\n")
 
             units_installed = _install_systemd_units(release_dir)
             if units_installed:
-                _systemctl(["daemon-reload"])
+                log("install systemd units")
+                try:
+                    _systemctl(["daemon-reload"])
+                except subprocess.CalledProcessError as exc:
+                    log("warn: systemctl daemon-reload failed (systemd not running?)")
+                    log("manual: systemctl daemon-reload")
+                    log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
 
             prev_target = _switch_symlink_atomic(os.path.join(install_root, "current"), release_dir)
             try:
+                log("restart device service")
                 _restart_unit(DEVICE_UNIT)
+            except subprocess.CalledProcessError as exc:
+                log(f"warn: failed to restart {DEVICE_UNIT} (systemd not running?)")
+                log(f"manual: systemctl restart {DEVICE_UNIT}")
+                log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
             except Exception:
                 if prev_target:
                     _switch_symlink_atomic(os.path.join(install_root, "current"), prev_target)
@@ -304,10 +328,14 @@ def cmd_apply(args: argparse.Namespace) -> int:
                         pass
                 raise
             try:
+                log("enable updater timer")
                 _systemctl(["enable", "--now", "vo-updater.timer"])
-            except subprocess.CalledProcessError:
-                pass
+            except subprocess.CalledProcessError as exc:
+                log("warn: failed to enable updater timer (systemd not running?)")
+                log("manual: systemctl enable --now vo-updater.timer")
+                log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
             _cleanup_old_releases(install_root, version)
+            log("cleanup old releases")
 
             state = {
                 "deviceId": vin,
@@ -316,6 +344,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
                 "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             _write_text(os.path.join(install_root, "state.json"), json.dumps(state, indent=2) + "\n")
+            log("update complete")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return 0
