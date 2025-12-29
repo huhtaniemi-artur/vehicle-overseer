@@ -892,7 +892,6 @@ const logServer = new WebSocketServer({ noServer: true });
     }
 
     const upstream = net.createConnection({ host: logHost, port: Number(resolvedLogPort) });
-    upstream.setTimeout(15_000, () => upstream.destroy(new Error('timeout')));
 
     let buf = '';
     const flushLines = () => {

@@ -16,7 +16,9 @@ import ipaddress
 import json
 import os
 import re
+import select
 import signal
+import socket
 import socketserver
 import subprocess
 import sys
@@ -212,16 +214,46 @@ class LogTCPHandler(socketserver.BaseRequestHandler):
         device: Device = self.server.device  # type: ignore[attr-defined]
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
         print(f"[{device.vin}] logs client connected: {peer}")
+        proc = None
         try:
-            for line in device.initial_log_lines():
-                self.request.sendall((line + "\n").encode("utf-8"))
+            proc = subprocess.Popen(
+                ["journalctl", "--since", "1 hour ago", "-f", "--output=cat", "--no-pager"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            assert proc.stdout is not None
+            stdout_fd = proc.stdout.fileno()
+            peek_flags = socket.MSG_PEEK | getattr(socket, "MSG_DONTWAIT", 0)
             while True:
-                time.sleep(1)
-                line = f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {device.vin} heartbeat"
-                self.request.sendall((line + "\n").encode("utf-8"))
-        except (BrokenPipeError, ConnectionResetError):
-            return
+                if proc.poll() is not None:
+                    break
+                ready, _, _ = select.select([stdout_fd], [], [], 1.0)
+                if ready:
+                    chunk = os.read(stdout_fd, 4096)
+                    if not chunk:
+                        break
+                    try:
+                        self.request.sendall(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+                    continue
+                try:
+                    peek = self.request.recv(1, peek_flags)
+                    if peek == b"":
+                        break
+                except BlockingIOError:
+                    continue
+                except (ConnectionResetError, OSError):
+                    break
+        except FileNotFoundError:
+            self.request.sendall(b"[log] journalctl not found\n")
         finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
             print(f"[{device.vin}] logs client disconnected: {peer}")
 
 
