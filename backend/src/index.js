@@ -499,6 +499,7 @@ async function main() {
           'vehicle-overseer-device.service',
           'vo-updater.service',
           'vo-updater.timer',
+          'vo_updater.py',
           'device.env',
           'updater.env'
         ]);
@@ -538,15 +539,16 @@ async function main() {
 	          const content = [
 	            `VO_INSTALL_ROOT=/opt/vehicle-overseer-device`,
 	            `VO_ARTIFACT_KEY_PATH=/etc/vehicle-overseer/artifact.key`,
-	            `# Optional (recommended): enable signature verification`,
-	            `# VO_UPDATE_PUBKEY_PATH=/etc/vehicle-overseer/update_pubkey.pem`,
+	            `VO_DEVICE_UID_PATH=/etc/vehicle-overseer/device.uid`,
 	            ``
 	          ].join('\n');
 	          res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
 	          return res.end(content);
 	        }
 
-        const filePath = path.join(rootDir, 'tools', 'systemd', name);
+        const filePath = name === 'vo_updater.py'
+          ? path.join(rootDir, 'tools', 'vo_updater.py')
+          : path.join(rootDir, 'tools', 'systemd', name);
         const content = fs.readFileSync(filePath, 'utf-8');
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(content);
@@ -640,8 +642,8 @@ async function main() {
 	        }
 	        saveDb();
 
-	        res.writeHead(200, { 'Content-Type': 'application/json' });
-	        return res.end(JSON.stringify({ deviceUid, keyId, keyB64 }));
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end(`${deviceUid}\n${keyB64}\n`);
 	      } catch (err) {
 	        res.writeHead(500, { 'Content-Type': 'application/json' });
 	        return res.end(JSON.stringify({ error: 'key error', details: err.message }));

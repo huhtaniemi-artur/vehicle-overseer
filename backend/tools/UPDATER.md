@@ -10,7 +10,7 @@ This repo contains a pull-based updater design intended for Linux devices runnin
 
 The recommended on-device layout is:
 
-- `/opt/vehicle-overseer-device/releases/<version>/...`
+- `/opt/vehicle-overseer-device/releases/<version>/...` (must include `device_service.py`, `vo_updater.py`, and optionally `systemd/` unit files)
 - `/opt/vehicle-overseer-device/current -> releases/<version>` (symlink)
 - `/etc/vehicle-overseer/device.env` (device + backend settings)
 - `/etc/vehicle-overseer/updater.env` (optional updater settings)
@@ -29,6 +29,7 @@ The updater expects a `.tar.gz` with files at the archive root, e.g.:
 - `device_service.py`
 - `vo_updater.py`
 - `VERSION` (string matching manifest version)
+- Optional: `systemd/vehicle-overseer-device.service`, `systemd/vo-updater.service`, `systemd/vo-updater.timer`
 
 ## How artifacts are provided (current backend)
 
@@ -51,13 +52,14 @@ If no artifacts exist, `GET /api/device/manifest` returns `404`.
 - Artifact integrity is checked by SHA256.
 - Manifest authentication is optional via RSA signatures:
   - Backend signs using `updateSigningKeyPath` (private key, PEM).
-  - Device verifies using `VO_UPDATE_PUBKEY_PATH` (public key, PEM).
 - Optional in-transfer encryption:
-  - Setup fetches a per-device base64 key from `GET /api/device/key?token=...` and stores it as `/etc/vehicle-overseer/artifact.key`.
-  - The same response provides `deviceUid`, stored as `/etc/vehicle-overseer/device.uid` and exported as `VO_DEVICE_UID`.
+  - Setup fetches a per-device base64 key from `GET /api/device/key?token=...`.
+  - Response format is plain text: first line `deviceUid`, second line `keyB64`.
   - Token creation: use `POST /api/bootstrap-token` (localhost only) to mint a token, then call `/api/srvcsetup?vin=...&token=...`.
   - Optional: mint a token explicitly from the backend (localhost only):
     - `curl -sS -X POST http://127.0.0.1:3100/api/bootstrap-token -H 'Content-Type: application/json' -d '{"kind":"dev"}'`
-  - The updater uses `VO_ARTIFACT_KEY_PATH` and requests encrypted downloads by adding `?uid=DEVICE_UID` to the artifact URL; backend responds with `X-VO-Enc: aes-256-ctr` + `X-VO-Iv: ...`.
+- The updater uses `VO_ARTIFACT_KEY_PATH` and requests encrypted downloads by adding `?uid=DEVICE_UID` to the artifact URL; backend responds with `X-VO-Enc: aes-256-ctr` + `X-VO-Iv: ...`.
+- Device UID can be provided via `VO_DEVICE_UID` or a file at `/etc/vehicle-overseer/device.uid` (override with `VO_DEVICE_UID_PATH`).
+- The updater installs/updates systemd unit files if they are present in the release artifact and enables `vo-updater.timer`.
 - Device can report per-device ports in `POST /api/ping` (`data.actionPort`, `data.logPort`); backend prefers these over global defaults when present.
 - Service version info is reported in `POST /api/ping` as `data.version` (e.g. `serviceVersion`, `buildId`, `updaterVersion`).

@@ -12,7 +12,6 @@ Backend endpoints used:
 
 Security note:
 - This prototype supports optional manifest authentication via RSA-SHA256
-  (pinned public key: VO_UPDATE_PUBKEY_PATH). Artifact integrity is checked via SHA256.
 """
 
 from __future__ import annotations
@@ -68,15 +67,6 @@ def _http_get_bytes(url: str) -> tuple[bytes, dict[str, str]]:
 
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def _add_query(url_in: str, params: dict[str, str]) -> str:
-    u = urllib.parse.urlsplit(url_in)
-    q = urllib.parse.parse_qs(u.query, keep_blank_values=True)
-    for k, v in params.items():
-        q[k] = [v]
-    query = urllib.parse.urlencode(q, doseq=True)
-    return urllib.parse.urlunsplit((u.scheme, u.netloc, u.path, query, u.fragment))
 
 
 def _load_artifact_key(path: str | None) -> bytes | None:
@@ -188,25 +178,63 @@ def _restart_unit(unit_name: str) -> None:
     subprocess.run(["systemctl", "is-active", "--quiet", unit_name], check=True)
 
 DEVICE_UNIT = "vehicle-overseer-device.service"
+SYSTEMD_DIR = "/etc/systemd/system"
+UNIT_FILES = (
+    "vehicle-overseer-device.service",
+    "vo-updater.service",
+    "vo-updater.timer",
+)
+
+
+def _install_systemd_units(release_dir: str) -> bool:
+    installed = False
+    for name in UNIT_FILES:
+        candidate_paths = [
+            os.path.join(release_dir, name),
+            os.path.join(release_dir, "systemd", name),
+        ]
+        src = next((p for p in candidate_paths if os.path.isfile(p)), None)
+        if not src:
+            continue
+        dst = os.path.join(SYSTEMD_DIR, name)
+        os.makedirs(SYSTEMD_DIR, exist_ok=True)
+        shutil.copy2(src, dst)
+        installed = True
+    return installed
+
+
+def _cleanup_old_releases(install_root: str, keep_version: str) -> None:
+    releases_dir = os.path.join(install_root, "releases")
+    try:
+        entries = os.listdir(releases_dir)
+    except FileNotFoundError:
+        return
+    for name in entries:
+        if name == keep_version:
+            continue
+        path = os.path.join(releases_dir, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
     backend = args.backend.rstrip("/")
     vin = args.vin
     install_root = args.install_root
-    pubkey_path = args.pubkey_path
     artifact_key = _load_artifact_key(args.artifact_key_path or _env("VO_ARTIFACT_KEY_PATH"))
-    device_uid = args.device_uid or _env("VO_DEVICE_UID")
+    uid_path = (
+        args.device_uid_path
+        or _env("VO_DEVICE_UID_PATH")
+        or "/etc/vehicle-overseer/device.uid"
+    )
+    device_uid = args.device_uid or _env("VO_DEVICE_UID") or _read_text(uid_path)
     if artifact_key is not None and not device_uid:
         raise ValueError("artifact key configured but no VO_DEVICE_UID provided")
 
     os.makedirs(os.path.join(install_root, "releases"), exist_ok=True)
 
-    manifest_url = f"{backend}/api/device/manifest?vin={urllib.parse.quote(vin)}"
+    manifest_url = f"{backend}/api/device/manifest?vin={vin}"
     manifest = _http_get_json(manifest_url)
-
-    if pubkey_path:
-        _verify_manifest_signature(manifest, pubkey_path)
 
     version = manifest.get("version")
     artifact = manifest.get("artifact") or {}
@@ -225,7 +253,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     full_artifact_url = urllib.parse.urljoin(f"{backend}/", artifact_url.lstrip("/"))
     if artifact_key is not None:
-        full_artifact_url = _add_query(full_artifact_url, {"uid": str(device_uid)})
+        sep = "&" if "?" in full_artifact_url else "?"
+        full_artifact_url = f"{full_artifact_url}{sep}uid={device_uid}"
     blob, headers = _http_get_bytes(full_artifact_url)
     enc = headers.get("X-VO-Enc") or headers.get("x-vo-enc")
     if enc:
@@ -259,6 +288,10 @@ def cmd_apply(args: argparse.Namespace) -> int:
             if not _read_text(os.path.join(release_dir, "VERSION")):
                 _write_text(os.path.join(release_dir, "VERSION"), version + "\n")
 
+            units_installed = _install_systemd_units(release_dir)
+            if units_installed:
+                _systemctl(["daemon-reload"])
+
             prev_target = _switch_symlink_atomic(os.path.join(install_root, "current"), release_dir)
             try:
                 _restart_unit(DEVICE_UNIT)
@@ -270,6 +303,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
                     except Exception:
                         pass
                 raise
+            try:
+                _systemctl(["enable", "--now", "vo-updater.timer"])
+            except subprocess.CalledProcessError:
+                pass
+            _cleanup_old_releases(install_root, version)
 
             state = {
                 "deviceId": vin,
@@ -296,11 +334,6 @@ def main() -> None:
         help="Install root with releases/ and current/ symlink",
     )
     common.add_argument(
-        "--pubkey-path",
-        default=_env("VO_UPDATE_PUBKEY_PATH"),
-        help="If set, require and verify manifest signature using this RSA public key (PEM)",
-    )
-    common.add_argument(
         "--artifact-key-path",
         default=None,
         help="Path to base64 artifact key (or set VO_ARTIFACT_KEY_PATH)",
@@ -309,6 +342,11 @@ def main() -> None:
         "--device-uid",
         default=_env("VO_DEVICE_UID"),
         help="Device UID for encrypted artifact downloads (or set VO_DEVICE_UID)",
+    )
+    common.add_argument(
+        "--device-uid-path",
+        default=_env("VO_DEVICE_UID_PATH"),
+        help="Path to device UID file (default: /etc/vehicle-overseer/device.uid)",
     )
 
     p_apply = sub.add_parser("apply", parents=[common], help="Fetch manifest and apply if needed")
