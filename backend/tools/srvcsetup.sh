@@ -14,7 +14,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 BACKEND_BASE=__BACKEND_BASE__
-VIN=__VIN__
+LABEL=__LABEL__
 TOKEN=__TOKEN__
 REPORT_IFACE=__REPORT_IFACE__
 ACTION_PORT=__ACTION_PORT__
@@ -38,7 +38,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-log "backend=$BACKEND_BASE vin=$VIN reportIface=$REPORT_IFACE actionPort=$ACTION_PORT logPort=$LOG_PORT pingInterval=${PING_INTERVAL_S}s"
+log "backend=$BACKEND_BASE label=$LABEL reportIface=$REPORT_IFACE actionPort=$ACTION_PORT logPort=$LOG_PORT pingInterval=${PING_INTERVAL_S}s"
 log "installRoot=$INSTALL_ROOT envDir=$ENV_DIR"
 
 mkdir -p "$INSTALL_ROOT" "$ENV_DIR" "$BOOTSTRAP_DIR"
@@ -54,7 +54,7 @@ mkdir -p "$SYSTEMD_DIR"
 
 log "fetch device artifact key (overwrite $ENV_DIR/artifact.key)"
 if [ -z "$TOKEN" ]; then
-  log "missing bootstrap token; call /api/srvcsetup with ?vin=...&token=..."
+  log "missing bootstrap token; call /api/srvcsetup with ?label=...&token=..."
   exit 3
 fi
 KEY_URL="$BACKEND_BASE/api/device/key?token=$TOKEN"
@@ -74,7 +74,7 @@ log "wrote $ENV_DIR/device.uid"
 
 if [ ! -f "$ENV_DIR/device.env" ]; then
   log "write $ENV_DIR/device.env (new)"
-  FETCH "$BACKEND_BASE/api/srvcsetup/files/device.env?vin=$VIN&reportIface=$REPORT_IFACE&actionPort=$ACTION_PORT&logPort=$LOG_PORT&pingIntervalS=$PING_INTERVAL_S" >"$ENV_DIR/device.env"
+  FETCH "$BACKEND_BASE/api/srvcsetup/files/device.env?label=$LABEL&reportIface=$REPORT_IFACE&actionPort=$ACTION_PORT&logPort=$LOG_PORT&pingIntervalS=$PING_INTERVAL_S" >"$ENV_DIR/device.env"
 else
   log "keep existing $ENV_DIR/device.env"
 fi
@@ -108,7 +108,6 @@ fi
 log "run updater (initial install)"
 /usr/bin/python3 "$BOOTSTRAP_DIR/vo_updater.py" \
   --backend "$BACKEND_BASE" \
-  --vin "$VIN" \
   --artifact-key-path "$ENV_DIR/artifact.key" \
   --device-uid-path "$ENV_DIR/device.uid"
 

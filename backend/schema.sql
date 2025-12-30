@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS versions (
 
 -- Per-device desired target version (NULL = newest available).
 CREATE TABLE IF NOT EXISTS device_targets (
-  vin TEXT PRIMARY KEY,
+  device_uid TEXT PRIMARY KEY,
   desired_version TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

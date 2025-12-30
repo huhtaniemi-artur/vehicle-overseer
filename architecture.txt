@@ -9,7 +9,8 @@ Architecture overview (current implementation + clarified target behavior)
     - While online, entries keep their position (updates do not reorder the list).
     - Offline entries are grouped and ordered by “went offline” time (newest offline first), derived from `offlineSince = lastUpdate + offlineTimeoutMs` so the ordering survives refresh.
     - When an offline entry becomes online again, it appends to the bottom of the online list.
-  - Each entry shows: `VIN — device IP · <age>` where `<age>` updates continuously (1 Hz) without re-rendering the full list.
+  - Each entry shows: `Label — device IP · <age>` where `<age>` updates continuously (1 Hz) without re-rendering the full list.
+    - Label defaults to UID when not provided.
     - For ages <60s show seconds; 60s+ show minutes.
   - Update UX: entry flashes light-green on update.
   - Selected IP is shown as a pressable rectangle/button:
@@ -22,24 +23,24 @@ Architecture overview (current implementation + clarified target behavior)
     - Errors are shown in red next to the selector and persist until cleared by a later successful action.
     - The selected IP is kept visible even if an action fails (so the user can retry the same selection).
   - Logs:
-    - Log view is a full-screen overlay (top of viewport) with VIN/IP header, close button, tap-outside close, swipe-to-close.
+    - Log view is a full-screen overlay (top of viewport) with Label/IP header, close button, tap-outside close, swipe-to-close.
     - Filter box highlights space-separated keywords in the stream.
   - Settings: Backend URL input is hidden behind a settings button/popup; changing it forces reconnect to the new backend.
 
 - Backend (Node.js prototype):
   - HTTP:
-    - `POST /api/ping` accepts `{vin, ip-address, state, data}` (vin required), refreshes device presence/state in memory and broadcasts a WebSocket delta.
+    - `POST /api/ping` accepts `{uid, label, ip-address, state, data}` (uid required), refreshes device presence/state in memory and broadcasts a WebSocket delta.
     - `POST /api/action/select` records the selected IP and starts an action by opening a new connection from backend → device (action endpoint). Backend emits stage updates while it performs each real step and finally emits success or error to the UI. Action results are not embedded in `/api/ping`.
     - Updates (device pull):
-      - `GET /api/device/manifest?vin=VIN` returns a per-device manifest with `{version, artifact:{id,url,sha256}}`.
+      - `GET /api/device/manifest?uid=UID` returns a per-device manifest with `{version, artifact:{id,url,sha256}}`.
       - `GET /api/device/artifacts/<artifact-id>` serves the package bytes.
       - `GET /api/device/key?token=...` provisions an optional per-device transfer key (used by the updater for encrypted downloads).
     - Updates (artifact distribution):
       - Artifacts are stored by hash under `backend/data/artifacts/<sha256>` (artifact id = sha256).
       - Versions are tags in SQLite (`versions.version`) mapped to an artifact id (`versions.artifact_id`) imported via `node backend/tools/import_version.js`.
   - WebSocket:
-    - Shared UI stream `/ws` sends `init` (full snapshot on connect) and `entry` deltas (per VIN update).
-    - Per-vehicle log stream `/logs?vin=...` streams logs proxied from the device/service (in dev, the simulator acts as the device log source).
+    - Shared UI stream `/ws` sends `init` (full snapshot on connect) and `entry` deltas (per UID update).
+    - Per-device log stream `/logs?uid=...` streams logs proxied from the device/service (in dev, the simulator acts as the device log source).
   - Device endpoint resolution (current dev implementation):
     - Host: the latest `ip-address` reported by the service.
     - Ports: `data.actionPort` / `data.logPort` reported by the service (fallback: backend config `deviceActionPort` / `deviceLogPort`).
@@ -65,16 +66,16 @@ Architecture overview (current implementation + clarified target behavior)
   - Software updates (current prototype implementation):
     - Updater tool: `backend/tools/vo_updater.py` (intended to run as a systemd oneshot via timer).
     - Update loop:
-      - Timer triggers updater → updater calls `GET /api/device/manifest?vin=...`
-      - Updater downloads artifact from `artifact.url`, verifies SHA256 (and optional RSA-signed manifest), unpacks it into `/opt/vehicle-overseer-device/releases/<version>/`,
-        flips `/opt/vehicle-overseer-device/current` symlink, then restarts `vehicle-overseer-device.service`.
+      - Timer triggers updater → updater calls `GET /api/device/manifest?uid=...`
+      - Updater downloads artifact from `artifact.url`, verifies SHA256 (and optional RSA-signed manifest), unpacks it into `/opt/vehicle-overseer-device/app/`,
+        shifts the previous app to `/opt/vehicle-overseer-device/app.bak/`, then runs `update.sh install`.
     - Systemd templates:
-      - Device service: `backend/tools/systemd/vehicle-overseer-device.service` (runs `/opt/vehicle-overseer-device/current/device_service.py`)
+      - Device service: `backend/tools/systemd/vehicle-overseer-device.service` (runs `/opt/vehicle-overseer-device/app/device_service.py`)
       - Updater: `backend/tools/systemd/vo-updater.service` + `backend/tools/systemd/vo-updater.timer`
-    - Device ID: manifest pull uses `vin` as the stable device identifier; backend resolves per-device/per-group targeting from DB.
+    - Device ID: manifest pull uses UID as the stable device identifier; backend resolves per-device/per-group targeting from DB.
     - Note: push-triggered updates via the existing backend→device action connection are not implemented yet (planned: “force update now” commands).
     - Known gaps/risks:
-      - Backend currently auto-creates unknown VINs on first contact (`/api/ping` or manifest pull); production should authenticate device identity and restrict who can pull manifests.
+      - Backend currently accepts any UID on first contact; production should authenticate device identity and restrict who can pull manifests.
 
 - Simulator (dev tool):
   - Implemented in python: posts multiple vehicles at different intervals for UI testing and can emulate device-side action failure/success responses.

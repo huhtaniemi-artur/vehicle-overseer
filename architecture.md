@@ -1,10 +1,10 @@
 ```mermaid
 flowchart LR
   subgraph Targets
-    Service["Target service<br/>POST pings (~3s)<br/>{vin, ip-address, state, data}"]
+    Service["Target service<br/>POST pings (~3s)<br/>{uid, label, ip-address, state, data}"]
     Device["Target device"]
     Stub["Current stub service (Python)<br/>backend/tools/device_service.py<br/>waits for tun0 IPv4 before POST<br/>TCP action/log endpoints"]
-    Updater["Target updater (Python)<br/>backend/tools/vo_updater.py<br/>pulls manifest + artifact<br/>sends device-id/VIN"]
+    Updater["Target updater (Python)<br/>backend/tools/vo_updater.py<br/>pulls manifest + artifact<br/>uses device UID"]
   end
 
   subgraph Backend
@@ -14,7 +14,7 @@ flowchart LR
     WS["WS /ws (same port)<br/>init + entry deltas"]
     ActionConn["Per-action connection<br/>backend → device<br/>host = ip-address<br/>port = deviceActionPort"]
     Stages["Backend stages (real steps)<br/>connecting/apply/restart/success"]
-    Logs["WS /logs?vin=...<br/>log proxy<br/>port = deviceLogPort"]
+    Logs["WS /logs?uid=...<br/>log proxy<br/>port = deviceLogPort"]
     DB["SQLite (sql.js)<br/>artifacts + versions<br/>device targets + keys + tokens"]
   end
 
@@ -27,7 +27,7 @@ flowchart LR
 
   Service -->|POST pings| API
   Stub -->|POST pings| API
-  Updater -->|GET manifest (device-id)| Manifest
+  Updater -->|GET manifest (uid)| Manifest
   Manifest --> Artifact
   Updater -->|GET artifact| Artifact
   API --> WS

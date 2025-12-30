@@ -302,9 +302,9 @@ async function main() {
     }
   })();
 
-  const computeManifestSignature = ({ vin, version, artifactSha256 }) => {
+  const computeManifestSignature = ({ deviceUid, version, artifactSha256 }) => {
     if (!signingKeyPem) return { algo: null, sig: null, keyId: null };
-    const base = `${vin}\n${version}\n${artifactSha256}`;
+    const base = `${deviceUid}\n${version}\n${artifactSha256}`;
     const signature = crypto.sign('RSA-SHA256', Buffer.from(base, 'utf8'), signingKeyPem).toString('base64');
     const keyId = updateSigningKeyId || (typeof updateSigningKeyPath === 'string' ? path.basename(updateSigningKeyPath) : null);
     return { algo: 'rsa-sha256', sig: signature, keyId };
@@ -321,13 +321,13 @@ async function main() {
     return token;
   };
 
-  const resolveUpdateTarget = (vin) => {
+  const resolveUpdateTarget = (deviceUid) => {
     const row = getRow(
       `SELECT desired_version
        FROM device_targets
-       WHERE vin = $vin
+       WHERE device_uid = $uid
        LIMIT 1`,
-      { $vin: vin }
+      { $uid: deviceUid }
     );
     return { desiredVersion: row?.desired_version ?? null };
   };
@@ -366,7 +366,8 @@ async function main() {
   const computeStatus = (entry) => (Date.now() - entry.lastUpdate > OFFLINE_TIMEOUT_MS ? 'offline' : 'online');
 
   const serializeEntry = (entry) => ({
-    vin: entry.vin,
+    uid: entry.uid,
+    label: entry.label || null,
     ip: entry.ip,
     selectedIp: entry.selectedIp || null,
     state: entry.state || 'not implemented',
@@ -444,10 +445,10 @@ async function main() {
 
     if (pathname === '/api/srvcsetup' && req.method === 'GET') {
       const searchParams = new url.URL(req.url, `http://${req.headers.host}`).searchParams;
-      const vin = searchParams.get('vin');
-      if (!vin) {
+      const label = searchParams.get('label');
+      if (!label) {
         res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-        return res.end('vin required\n');
+        return res.end('label required\n');
       }
       let token = searchParams.get('token') || '';
       if (!token) {
@@ -470,7 +471,7 @@ async function main() {
       const template = fs.readFileSync(tmplPath, 'utf-8');
       const script = template
         .replaceAll('__BACKEND_BASE__', shQuote(backendBase))
-        .replaceAll('__VIN__', shQuote(vin))
+        .replaceAll('__LABEL__', shQuote(label))
         .replaceAll('__TOKEN__', shQuote(token))
         .replaceAll('__REPORT_IFACE__', shQuote(reportIface))
 	        .replaceAll('__ACTION_PORT__', String(actionPort))
@@ -525,7 +526,7 @@ async function main() {
         const backendBase = `http://${req.headers.host}`;
 
         if (name === 'device.env') {
-          const vin = sp.get('vin') || '';
+          const label = sp.get('label') || '';
           const reportIface = sp.get('reportIface') || sp.get('report_iface') || 'tun0';
           const actionPort = Number(sp.get('actionPort') || sp.get('action_port') || 9000);
           const logPort = Number(sp.get('logPort') || sp.get('log_port') || 9100);
@@ -535,13 +536,14 @@ async function main() {
           );
           const content = [
             `VO_BACKEND=${backendBase}`,
-            `VO_VIN=${vin}`,
+            `VO_LABEL=${label}`,
             `VO_REPORT_IFACE=${reportIface}`,
             `VO_WAIT_TIMEOUT_S=0`,
             `VO_ACTION_PORT=${actionPort}`,
             `VO_LOG_PORT=${logPort}`,
             `VO_PING_INTERVAL_S=${pingIntervalS}`,
             `VO_BIND_HOST=auto`,
+            `VO_DEVICE_UID_PATH=/etc/vehicle-overseer/device.uid`,
             ``
           ].join('\n');
           res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -580,16 +582,17 @@ async function main() {
     if (pathname === '/api/ping' && req.method === 'POST') {
       try {
         const payload = await parseJson(req);
-        const vin = payload.vin;
-        if (!vin) {
+        const uid = payload.uid;
+        if (!uid) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'vin required' }));
+          return res.end(JSON.stringify({ error: 'uid required' }));
         }
         const now = Date.now();
-        const existing = entries.get(vin) || {};
+        const existing = entries.get(uid) || {};
         const entry = {
           ...existing,
-          vin,
+          uid,
+          label: payload.label || existing.label,
           ip: payload['ip-address'] || payload.ip || existing.ip,
           state: payload.state || existing.state,
           data: payload.data || existing.data,
@@ -599,7 +602,7 @@ async function main() {
           stage: existing.stage,
           lastUpdate: now
         };
-        entries.set(vin, entry);
+        entries.set(uid, entry);
         broadcast({ type: 'entry', entry: serializeEntry(entry) });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true }));
@@ -666,13 +669,13 @@ async function main() {
 	    if (pathname === '/api/device/manifest' && req.method === 'GET') {
 	      try {
 	        const searchParams = new url.URL(req.url, `http://${req.headers.host}`).searchParams;
-	        const vin = searchParams.get('vin');
-	        if (!vin) {
+	        const deviceUid = searchParams.get('uid');
+	        if (!deviceUid) {
 	          res.writeHead(400, { 'Content-Type': 'application/json' });
-	          return res.end(JSON.stringify({ error: 'vin required' }));
+	          return res.end(JSON.stringify({ error: 'uid required' }));
 	        }
 
-	        const { desiredVersion } = resolveUpdateTarget(vin);
+	        const { desiredVersion } = resolveUpdateTarget(deviceUid);
 	        const artifact = resolveArtifact({ desiredVersion });
 	        if (!artifact) {
 	          res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -683,9 +686,9 @@ async function main() {
 	        }
 
 	        const artifactPath = `/api/device/artifacts/${encodeURIComponent(artifact.artifactId)}`;
-	        const { algo, sig, keyId } = computeManifestSignature({ vin, version: artifact.version, artifactSha256: artifact.sha256 });
+	        const { algo, sig, keyId } = computeManifestSignature({ deviceUid, version: artifact.version, artifactSha256: artifact.sha256 });
 	        const manifest = {
-	          vin,
+	          uid: deviceUid,
 	          version: artifact.version,
 	          artifact: {
 	            id: artifact.artifactId,
@@ -729,7 +732,7 @@ async function main() {
 	        }
 
 	        const searchParams = new url.URL(req.url, `http://${req.headers.host}`).searchParams;
-	        const deviceUid = searchParams.get('uid') || searchParams.get('deviceUid') || searchParams.get('device_uid');
+	        const deviceUid = searchParams.get('uid');
 	        if (!deviceUid) {
 	          res.writeHead(403, { 'Content-Type': 'application/json' });
 	          return res.end(JSON.stringify({ error: 'uid required' }));
@@ -769,19 +772,19 @@ async function main() {
     if (pathname === '/api/action/select' && req.method === 'POST') {
       try {
         const payload = await parseJson(req);
-        const vin = payload.vin;
+        const uid = payload.uid;
         const ip = payload.ip;
-        if (!vin || !ip) {
+        if (!uid || !ip) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'vin and ip required' }));
+          return res.end(JSON.stringify({ error: 'uid and ip required' }));
         }
-        const entry = entries.get(vin);
+        const entry = entries.get(uid);
 	        if (!entry) {
 	          res.writeHead(404, { 'Content-Type': 'application/json' });
 	          return res.end(JSON.stringify({ error: 'entry not found' }));
 	        }
 	        entry.selectedIp = ip;
-	        entries.set(vin, entry);
+	        entries.set(uid, entry);
 
         const deviceHost = entry.ip;
         const resolvedActionPort = (
@@ -800,14 +803,14 @@ async function main() {
 
         const setStage = (stage) => {
           entry.stage = stage;
-          entries.set(vin, entry);
+          entries.set(uid, entry);
           broadcast({ type: 'entry', entry: serializeEntry(entry) });
         };
 
         const clearStageSoon = () => {
           setTimeout(() => {
             entry.stage = null;
-            entries.set(vin, entry);
+            entries.set(uid, entry);
             broadcast({ type: 'entry', entry: serializeEntry(entry) });
           }, 1500);
         };
@@ -816,7 +819,7 @@ async function main() {
         const result = await new Promise((resolve) => {
           const socket = net.createConnection({ host: deviceHost, port: Number(resolvedActionPort) }, () => {
             setStage('applying');
-            socket.write(`${JSON.stringify({ vin, ip })}\n`);
+            socket.write(`${JSON.stringify({ uid, ip })}\n`);
           });
 
           socket.setTimeout(8000, () => {
@@ -847,7 +850,7 @@ async function main() {
 
 	        entry.lastError = result.error || 'device error';
 	        entry.stage = null;
-	        entries.set(vin, entry);
+	        entries.set(uid, entry);
 	        broadcast({ type: 'entry', entry: serializeEntry(entry) });
 	        res.writeHead(200, { 'Content-Type': 'application/json' });
 	        return res.end(JSON.stringify({ ok: false, error: entry.lastError }));
@@ -885,13 +888,13 @@ const logServer = new WebSocketServer({ noServer: true });
 
   logServer.on('connection', (socket, request) => {
     const { searchParams, pathname } = new url.URL(request.url, `http://${request.headers.host}`);
-    let vin = searchParams.get('vin');
-    if (!vin && pathname.startsWith('/logs/')) {
-      vin = pathname.split('/').pop();
+    let uid = searchParams.get('uid');
+    if (!uid && pathname.startsWith('/logs/')) {
+      uid = pathname.split('/').pop();
     }
-    const entry = vin ? entries.get(vin) : null;
-    if (!vin || !entry) {
-      socket.send(JSON.stringify({ error: 'vin not found' }));
+    const entry = uid ? entries.get(uid) : null;
+    if (!uid || !entry) {
+      socket.send(JSON.stringify({ error: 'uid not found' }));
       return socket.close();
     }
 
@@ -903,7 +906,7 @@ const logServer = new WebSocketServer({ noServer: true });
     );
 
     if (!logHost || !resolvedLogPort) {
-      socket.send(`[backend] no log endpoint configured for ${vin}`);
+      socket.send(`[backend] no log endpoint configured for ${uid}`);
       return socket.close();
     }
 
@@ -960,7 +963,7 @@ const logServer = new WebSocketServer({ noServer: true });
   server.listen(port, host, () => {
     console.log(`Backend listening on ${host}:${port}`);
     console.log('HTTP endpoints: GET /api/config, GET /api/entries, POST /api/ping, POST /api/action/select, GET /api/device/manifest, GET /api/device/artifacts/<id>, GET /api/device/key, POST /api/bootstrap-token');
-    console.log('WebSockets: ws://host:port/ws (updates), ws://host:port/logs?vin=VIN (per-vehicle logs)');
+    console.log('WebSockets: ws://host:port/ws (updates), ws://host:port/logs?uid=UID (per-device logs)');
   });
 }
 

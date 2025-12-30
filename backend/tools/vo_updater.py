@@ -8,7 +8,7 @@ Intended usage:
 - Executes update.sh from the artifact to install/remove system files.
 
 Backend endpoints used:
-- GET  /api/device/manifest?vin=VIN
+- GET  /api/device/manifest?uid=UID
 - GET  /api/device/artifacts/<artifact-id>
 
 Security note:
@@ -105,43 +105,6 @@ def _decrypt_aes_256_ctr(ciphertext: bytes, key: bytes, iv_hex: str) -> bytes:
     return proc.stdout
 
 
-def _verify_manifest_signature(manifest: dict, pubkey_path: str) -> None:
-    algo = manifest.get("signatureAlgo")
-    sig_b64 = manifest.get("signature")
-    if algo != "rsa-sha256" or not isinstance(sig_b64, str) or not sig_b64:
-        raise ValueError("manifest is missing signature (expected rsa-sha256)")
-    try:
-        signature = base64.b64decode(sig_b64, validate=True)
-    except Exception as exc:
-        raise ValueError(f"invalid base64 signature: {exc}") from exc
-
-    artifact = manifest.get("artifact") or {}
-    message = f"{manifest.get('deviceId')}\n{manifest.get('version')}\n{artifact.get('sha256')}"
-
-    with tempfile.TemporaryDirectory(prefix="vo-updater-verify-") as tmp:
-        msg_path = os.path.join(tmp, "msg.txt")
-        sig_path = os.path.join(tmp, "sig.bin")
-        with open(msg_path, "wb") as f:
-            f.write(message.encode("utf-8"))
-        with open(sig_path, "wb") as f:
-            f.write(signature)
-
-        try:
-            proc = subprocess.run(
-                ["openssl", "dgst", "-sha256", "-verify", pubkey_path, "-signature", sig_path, msg_path],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError("openssl not found; install it or disable signature verification") from exc
-
-        if proc.returncode != 0:
-            detail = (proc.stdout + "\n" + proc.stderr).strip()
-            raise ValueError(f"manifest signature verification failed: {detail or 'verify failed'}")
-
-
 def _safe_extract_tar(tar_path: str, dest_dir: str) -> None:
     with tarfile.open(tar_path, "r:gz") as tar:
         for member in tar.getmembers():
@@ -224,12 +187,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if artifact_key is not None and not device_uid:
         raise ValueError("artifact key configured but no VO_DEVICE_UID provided")
     log(f"deviceUidPath={uid_path}")
-    vin = args.vin
-    if not vin:
-        raise ValueError("VO_VIN required to fetch manifest")
+    if not device_uid:
+        raise ValueError("device UID required to fetch manifest")
 
-    manifest_vin = urllib.parse.quote(vin, safe="")
-    manifest_url = f"{backend}/api/device/manifest?vin={manifest_vin}"
+    manifest_uid = urllib.parse.quote(device_uid, safe="")
+    manifest_url = f"{backend}/api/device/manifest?uid={manifest_uid}"
     log(f"fetch manifest: {manifest_url}")
     manifest = _http_get_json(manifest_url)
 
@@ -243,11 +205,6 @@ def cmd_apply(args: argparse.Namespace) -> int:
         raise ValueError("manifest missing artifact.url")
     if not isinstance(artifact_sha256, str) or not artifact_sha256:
         raise ValueError("manifest missing artifact.sha256")
-
-    current_version = _read_text(os.path.join(app_dir, "VERSION"))
-    if current_version == version and not args.force:
-        log(f"already on version {version}; skipping")
-        return 0
 
     full_artifact_url = urllib.parse.urljoin(f"{backend}/", artifact_url.lstrip("/"))
     sep = "&" if "?" in full_artifact_url else "?"
@@ -295,8 +252,6 @@ def cmd_apply(args: argparse.Namespace) -> int:
             env["VO_APP_DIR"] = app_dir
             env["VO_APP_BACKUP"] = backup_dir
             env["VO_BACKEND"] = backend
-            if vin:
-                env["VO_VIN"] = vin
             _run_update_script(app_dir, "install", env)
 
             if os.path.isdir(backup_dir):
@@ -311,7 +266,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             raise
 
         state = {
-            "vin": vin,
+            "uid": device_uid,
             "version": version,
             "artifactSha256": artifact_sha256,
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -378,12 +333,6 @@ def main() -> None:
         default=_env("VO_INSTALL_ROOT", "/opt/vehicle-overseer-device"),
         help="Install root with app/ directory",
     )
-    parser.add_argument(
-        "--vin",
-        default=_env("VO_VIN"),
-        help="Device label (vin) for manifest lookup (or set VO_VIN)",
-    )
-    parser.add_argument("--force", action="store_true", help="Apply even if version matches current")
     parser.add_argument(
         "--artifact-key-path",
         default=None,

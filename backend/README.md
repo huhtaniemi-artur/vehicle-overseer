@@ -11,9 +11,9 @@ Setup
 Key files
 - `config.example.json`: Defaults for service name, MQTT key, IP list, DB path, plus `deviceActionPort`/`deviceLogPort` for per-device action/log TCP endpoints (host = device `ip-address`).
 - `schema.sql`: Tables for update artifacts/versions, per-device update targets, device keys, and bootstrap tokens.
-- `src/index.js`: Minimal functional server with HTTP endpoints, shared WebSocket for UI, per-vehicle log WebSocket proxy, SQLite (sql.js/WASM) wiring for update metadata, and per-action backend→device connection stub (TCP in dev; later real device integration).
-- `backend/tools/simulator.py`: Python simulator that acts like a device/service (POST pings, TCP action endpoint, TCP log stream).
+- `src/index.js`: Minimal functional server with HTTP endpoints, shared WebSocket for UI, per-device log WebSocket proxy, SQLite (sql.js/WASM) wiring for update metadata, and per-action backend→device connection stub (TCP in dev; later real device integration).
+- `backend/tools/simulator.py`: Python simulator that acts like a device/service (POST pings with uid + label, TCP action endpoint, TCP log stream).
 
 Endpoints
 - HTTP: `GET /api/config`, `GET /api/entries`, `POST /api/ping`, `POST /api/action/select`, `GET /api/health`
-- WS: `ws://host:port/ws` (UI updates), `ws://host:port/logs?vin=VIN` (per-vehicle log proxy)
+- WS: `ws://host:port/ws` (UI updates), `ws://host:port/logs?uid=UID` (per-device log proxy)

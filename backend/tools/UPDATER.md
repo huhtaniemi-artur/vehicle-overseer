@@ -18,7 +18,7 @@ The recommended on-device layout is:
 
 ## Backend endpoints
 
-- `GET /api/device/manifest?vin=VIN`
+- `GET /api/device/manifest?uid=DEVICE_UID`
 - `GET /api/device/artifacts/<artifact-id>`
 - `GET /api/device/key?token=...` (setup-time key provisioning; token required)
 - `POST /api/bootstrap-token` (localhost-only; create a one-time or dev token)
@@ -58,7 +58,7 @@ If no artifacts exist, `GET /api/device/manifest` returns `404`.
 - In-transfer encryption (always enabled):
   - Setup fetches a per-device base64 key from `GET /api/device/key?token=...`.
   - Response format is plain text: first line `deviceUid`, second line `keyB64`.
-  - Token creation: use `POST /api/bootstrap-token` (localhost only) to mint a token, then call `/api/srvcsetup?vin=...&token=...`.
+- Token creation: use `POST /api/bootstrap-token` (localhost only) to mint a token, then call `/api/srvcsetup?label=...&token=...`.
   - Optional: mint a token explicitly from the backend (localhost only):
     - `curl -sS -X POST http://127.0.0.1:3100/api/bootstrap-token -H 'Content-Type: application/json' -d '{"kind":"dev"}'`
 - The updater requires `VO_ARTIFACT_KEY_PATH` and requests encrypted downloads by adding `?uid=DEVICE_UID` to the artifact URL; backend responds with `X-VO-Enc: aes-256-ctr` + `X-VO-Iv: ...`.

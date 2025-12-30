@@ -53,6 +53,14 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _read_text(path: str) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
+
+
 def _iface_ipv4_addrs(iface: str) -> list[ipaddress.IPv4Interface]:
     out = _run(["ip", "-o", "-f", "inet", "addr", "show", "dev", iface]).stdout
     addrs: list[ipaddress.IPv4Interface] = []
@@ -98,7 +106,8 @@ def wait_for_iface_ipv4(iface: str, timeout_s: float) -> str:
 class Device:
     def __init__(
         self,
-        vin: str,
+        uid: str,
+        label: str,
         backend_base: str,
         reported_ip: str,
         bind_host: str,
@@ -108,7 +117,8 @@ class Device:
         jsonpath: str,
         report_iface: str | None,
     ) -> None:
-        self.vin = vin
+        self.uid = uid
+        self.label = label
         self.backend_base = backend_base.rstrip("/")
         self.reported_ip: str | None = reported_ip
         self.bind_host = bind_host
@@ -154,7 +164,8 @@ class Device:
                     continue
 
             payload = {
-                "vin": self.vin,
+                "uid": self.uid,
+                "label": self.label,
                 "ip-address": self.reported_ip,
                 "state": "not implemented",
                 "data": {
@@ -172,7 +183,7 @@ class Device:
             try:
                 post_json(f"{self.backend_base}/api/ping", payload)
             except Exception as exc:
-                print(f"[{self.vin}] ping failed: {exc}")
+                print(f"[{self.label}] ping failed: {exc}")
             time.sleep(self.ping_interval_s)
 
     def handle_action(self, requested_ip: str) -> dict:
@@ -182,14 +193,6 @@ class Device:
         if action_n % 2 == 1:
             return {"ok": False, "error": "Unable to write destination file (simulated)"}
         return {"ok": True}
-
-    def initial_log_lines(self) -> list[str]:
-        now = time.time()
-        return [
-            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 3600))}] {self.vin} last-hour log (simulated) begin",
-            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 30))}] {self.vin} recent log line",
-            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))}] {self.vin} live stream start",
-        ]
 
 
 class ActionTCPHandler(socketserver.StreamRequestHandler):
@@ -203,9 +206,9 @@ class ActionTCPHandler(socketserver.StreamRequestHandler):
             self.wfile.write((json.dumps(out) + "\n").encode("utf-8"))
             return
         requested_ip = msg.get("ip", "")
-        print(f"[{device.vin}] action received: ip={requested_ip!r}")
+        print(f"[{device.label}] action received: ip={requested_ip!r}")
         out = device.handle_action(requested_ip)
-        print(f"[{device.vin}] action result: {out}")
+        print(f"[{device.label}] action result: {out}")
         self.wfile.write((json.dumps(out) + "\n").encode("utf-8"))
 
 
@@ -213,7 +216,7 @@ class LogTCPHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         device: Device = self.server.device  # type: ignore[attr-defined]
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
-        print(f"[{device.vin}] logs client connected: {peer}")
+        print(f"[{device.label}] logs client connected: {peer}")
         proc = None
         try:
             proc = subprocess.Popen(
@@ -254,7 +257,7 @@ class LogTCPHandler(socketserver.BaseRequestHandler):
                     proc.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-            print(f"[{device.vin}] logs client disconnected: {peer}")
+            print(f"[{device.label}] logs client disconnected: {peer}")
 
 
 class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -285,6 +288,11 @@ def _handle_exit(signum: int, _frame) -> None:  # type: ignore[no-untyped-def]
 def cmd_run(args: argparse.Namespace) -> int:
     report_iface = None if args.report_ip else args.report_iface
 
+    device_uid = args.uid or _read_text(args.uid_path)
+    if not device_uid:
+        print("Device UID is required (set --uid or --uid-path)")
+        return 2
+
     if args.report_ip:
         reported_ip = args.report_ip
     else:
@@ -299,9 +307,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         bind_host = args.bind_host
 
-    jsonpath = args.jsonpath or f"/opt/{args.vin.lower()}/properties.json"
+    label = args.label
+    jsonpath = args.jsonpath or f"/opt/{label.lower()}/properties.json"
     print(
-        f"Device starting vin={args.vin!r} -> {args.backend} (ip-address {reported_ip}, bind {bind_host}, jsonpath {jsonpath})"
+        f"Device starting uid={device_uid!r} label={label!r} -> {args.backend} (ip-address {reported_ip}, bind {bind_host}, jsonpath {jsonpath})"
     )
 
     signal.signal(signal.SIGINT, _handle_exit)
@@ -309,7 +318,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         device = Device(
-            vin=args.vin,
+            uid=device_uid,
+            label=label,
             backend_base=args.backend,
             reported_ip=reported_ip,
             bind_host=bind_host,
@@ -333,7 +343,13 @@ def main() -> None:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--backend", default="http://localhost:3100", help="Backend base URL")
-    common.add_argument("--vin", required=True, help="Device VIN to report")
+    common.add_argument("--uid", default=os.environ.get("VO_DEVICE_UID"), help="Device UID to report")
+    common.add_argument(
+        "--uid-path",
+        default=os.environ.get("VO_DEVICE_UID_PATH", "/etc/vehicle-overseer/device.uid"),
+        help="Path to device UID file",
+    )
+    common.add_argument("--label", default=os.environ.get("VO_LABEL"), help="Display label for UI/logs")
     common.add_argument("--action-port", type=int, default=9000, help="TCP port for action endpoint")
     common.add_argument("--log-port", type=int, default=9100, help="TCP port for log endpoint")
     common.add_argument("--bind-host", default="auto", help="Host/IP to bind TCP servers on (auto = reported ip-address)")
@@ -351,7 +367,11 @@ def main() -> None:
         default=_env_float("VO_PING_INTERVAL_S", 10.0),
         help="POST ping interval in seconds",
     )
-    common.add_argument("--jsonpath", default=None, help="Value sent as data.jsonpath in POST pings")
+    common.add_argument(
+        "--jsonpath",
+        default=None,
+        help="Value sent as data.jsonpath in POST pings (default: /opt/_label_/)",
+    )
 
     p_run = sub.add_parser("run", help="Run device service", parents=[common])
     p_run.set_defaults(func=cmd_run)

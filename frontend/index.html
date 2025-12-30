@@ -207,9 +207,9 @@
     let entries = new Map();
     let entryNodes = new Map();
     let logSocket = null;
-    let selectedVin = null;
+    let selectedUid = null;
     let orderCounter = 0;
-    let selectingVin = null;
+    let selectingUid = null;
     let pendingIp = null;
     let updatesSocket = null;
     let serverTimeOffsetMs = 0;
@@ -243,8 +243,8 @@
 
     function updateLastSeenTick() {
       const now = getServerNow();
-      entryNodes.forEach(({ lastSeenEl }, vin) => {
-        const e = entries.get(vin);
+      entryNodes.forEach(({ lastSeenEl }, uid) => {
+        const e = entries.get(uid);
         if (!e) return;
         lastSeenEl.textContent = formatAge(now - e.lastUpdate);
       });
@@ -260,7 +260,8 @@
       headerRow.className = 'row';
       const headerLeft = document.createElement('div');
       const title = document.createElement('div');
-      title.innerHTML = `<strong>${entry.vin}</strong> — ${entry.ip || 'n/a'} · `;
+      const displayName = entry.label || entry.uid;
+      title.innerHTML = `<strong>${displayName}</strong> — ${entry.ip || 'n/a'} · `;
       const lastSeenEl = document.createElement('span');
       lastSeenEl.className = 'muted';
       title.appendChild(lastSeenEl);
@@ -290,15 +291,16 @@
     }
 
     function applyEntryToNode(entry, node) {
+      const displayName = entry.label || entry.uid;
       node.root.className = `entry ${entry.status}${entry.flash ? ' flash' : ''}`;
-      node.titleEl.innerHTML = `<strong>${entry.vin}</strong> — ${entry.ip || 'n/a'} · `;
+      node.titleEl.innerHTML = `<strong>${displayName}</strong> — ${entry.ip || 'n/a'} · `;
       node.titleEl.appendChild(node.lastSeenEl);
       node.lastSeenEl.textContent = `${Math.round((getServerNow() - entry.lastUpdate)/1000)}s`;
       const stageMsg = entry.stage || '';
       node.ipBtn.textContent = entry.selectedIp || 'select mqtt';
       node.ipBtn.disabled = false;
-      node.ipBtn.onclick = () => openSelector(entry.vin);
-      node.logBtn.onclick = () => connectLogs(entry.vin);
+      node.ipBtn.onclick = () => openSelector(entry.uid);
+      node.logBtn.onclick = () => connectLogs(entry.uid);
       const isOnline = entry.status === 'online';
       node.ipBtn.style.display = isOnline ? 'inline-block' : 'none';
       node.logBtn.style.display = isOnline ? 'inline-block' : 'none';
@@ -316,8 +318,8 @@
       const targetTs = entry.offlineSince || entry.lastUpdate || Date.now();
       let inserted = false;
       for (const child of offlineContainer.children) {
-        const vin = child.dataset?.vin;
-        const existing = vin ? entries.get(vin) : null;
+        const uid = child.dataset?.uid;
+        const existing = uid ? entries.get(uid) : null;
         const ts = existing?.offlineSince || existing?.lastUpdate || 0;
         if (ts < targetTs) {
           offlineContainer.insertBefore(node.root, child);
@@ -329,12 +331,12 @@
     }
 
     function upsertEntry(entry, { initialInsert = false } = {}) {
-      const hadNode = entryNodes.has(entry.vin);
-      let node = entryNodes.get(entry.vin);
+      const hadNode = entryNodes.has(entry.uid);
+      let node = entryNodes.get(entry.uid);
       if (!node) {
         node = buildEntryNode(entry);
-        node.root.dataset.vin = entry.vin;
-        entryNodes.set(entry.vin, node);
+        node.root.dataset.uid = entry.uid;
+        entryNodes.set(entry.uid, node);
       }
       applyEntryToNode(entry, node);
       const currentParent = node.root.parentElement;
@@ -359,11 +361,11 @@
       updateStatus();
     }
 
-    async function sendSelection(vin, ip) {
+    async function sendSelection(uid, ip) {
       await fetch(new URL('/api/action/select', backendBase), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ vin, ip })
+        body: JSON.stringify({ uid, ip })
       });
     }
 
@@ -374,13 +376,13 @@
       return text.replace(regex, '<mark>$1</mark>');
     }
 
-    function connectLogs(vin) {
+    function connectLogs(uid) {
       if (logSocket) logSocket.close();
       logsEl.innerHTML = '';
-      selectedVin = vin;
+      selectedUid = uid;
       const base = new URL(backendBase);
       const proto = base.protocol === 'https:' ? 'wss:' : 'ws:';
-      logSocket = new WebSocket(`${proto}//${base.host}/logs?vin=${encodeURIComponent(vin)}`);
+      logSocket = new WebSocket(`${proto}//${base.host}/logs?uid=${encodeURIComponent(uid)}`);
       logSocket.onmessage = (evt) => {
         const terms = logFilter.value.trim() ? logFilter.value.trim().split(' ') : [];
         const line = highlight(evt.data, terms);
@@ -391,8 +393,9 @@
         logsEl.innerHTML += '<div class="muted">[log stream closed]</div>';
       };
       overlay.style.display = 'flex';
-      const entry = entries.get(vin);
-      logTitle.textContent = `${vin} — ${entry?.ip || 'n/a'}`;
+      const entry = entries.get(uid);
+      const displayName = entry?.label || uid;
+      logTitle.textContent = `${displayName} — ${entry?.ip || 'n/a'}`;
     }
 
     function connectUpdates() {
@@ -422,13 +425,13 @@
             .sort((a, b) => (b.lastUpdate || 0) - (a.lastUpdate || 0))
             .forEach(e => {
             e.order = orderCounter++;
-            entries.set(e.vin, e);
+            entries.set(e.uid, e);
             e.offlineSince = e.status === 'offline' ? (e.lastUpdate + (config.offlineTimeoutMs || 10_000)) : null;
             upsertEntry(e, { initialInsert: true });
           });
         }
         if (msg.type === 'entry') {
-          const existing = entries.get(msg.entry.vin);
+          const existing = entries.get(msg.entry.uid);
           const prevStatus = existing ? existing.status : null;
           const offlineToOnline = prevStatus === 'offline' && msg.entry.status === 'online';
           const becomingOffline = msg.entry.status === 'offline' && prevStatus !== 'offline';
@@ -450,9 +453,9 @@
           const stage = hasStage ? msg.entry.stage : (existing ? existing.stage : null);
 
           const merged = { ...existing, ...msg.entry, order, offlineSince, lastError, stage, flash: true };
-          entries.set(msg.entry.vin, merged);
+          entries.set(msg.entry.uid, merged);
           setTimeout(() => {
-            const e = entries.get(msg.entry.vin);
+            const e = entries.get(msg.entry.uid);
             if (e) { e.flash = false; upsertEntry(e); }
           }, 500);
           upsertEntry(merged);
@@ -482,7 +485,7 @@
         .forEach(e => {
         e.order = orderCounter++;
         e.offlineSince = e.status === 'offline' ? (e.lastUpdate + (config.offlineTimeoutMs || 10_000)) : null;
-        entries.set(e.vin, e);
+        entries.set(e.uid, e);
         upsertEntry(e, { initialInsert: true });
       });
       connectUpdates();
@@ -492,7 +495,7 @@
       overlay.style.display = 'none';
       if (logSocket) logSocket.close();
       logSocket = null;
-      selectedVin = null;
+      selectedUid = null;
       logsEl.innerHTML = '';
     }
 
@@ -522,17 +525,17 @@
     });
 
     function closeSelector() {
-      selectingVin = null;
+      selectingUid = null;
       pendingIp = null;
       selectOverlay.style.display = 'none';
       selectList.innerHTML = '';
     }
 
-    function openSelector(vin) {
-      selectingVin = vin;
+    function openSelector(uid) {
+      selectingUid = uid;
       pendingIp = null;
       selectList.innerHTML = '';
-      const entry = entries.get(vin);
+      const entry = entries.get(uid);
       const currentSelected = entry?.selectedIp || null;
 
       config.ipList.forEach(ip => {
@@ -546,8 +549,8 @@
         confirm.textContent = 'Confirm';
         confirm.style.display = 'none';
         confirm.onclick = () => {
-          if (selectingVin && pendingIp) {
-            sendSelection(selectingVin, pendingIp);
+          if (selectingUid && pendingIp) {
+            sendSelection(selectingUid, pendingIp);
           }
           closeSelector();
         };

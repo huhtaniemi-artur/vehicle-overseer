@@ -29,6 +29,7 @@ Notes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import ipaddress
 import os
 import sys
@@ -155,14 +156,16 @@ class DummyNetwork:
 class Vehicle:
     def __init__(
         self,
-        vin: str,
+        uid: str,
+        label: str,
         ping_interval_s: float,
         device_ip: str,
         action_port: int,
         log_port: int,
         backend_base: str,
     ) -> None:
-        self.vin = vin
+        self.uid = uid
+        self.label = label
         self.ping_interval_s = ping_interval_s
         self.device_ip = device_ip
         self.action_port = action_port
@@ -174,11 +177,12 @@ class Vehicle:
     def post_ping_loop(self) -> None:
         while True:
             payload = {
-                "vin": self.vin,
+                "uid": self.uid,
+                "label": self.label,
                 "ip-address": self.device_ip,
                 "state": "not implemented",
                 "data": {
-                    "jsonpath": f"/opt/{self.vin.lower()}/properties.json",
+                    "jsonpath": f"/opt/{self.label.lower()}/properties.json",
                     "actionPort": self.action_port,
                     "logPort": self.log_port,
                 },
@@ -186,7 +190,7 @@ class Vehicle:
             try:
                 post_json(f"{self.backend_base}/api/ping", payload)
             except Exception as exc:
-                print(f"[{self.vin}] ping failed: {exc}")
+                print(f"[{self.label}] ping failed: {exc}")
             time.sleep(self.ping_interval_s)
 
     def handle_action(self, requested_ip: str) -> dict:
@@ -204,9 +208,9 @@ class Vehicle:
     def initial_log_lines(self) -> list[str]:
         now = time.time()
         return [
-            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 3600))}] {self.vin} last-hour log (simulated) begin",
-            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 30))}] {self.vin} recent log line",
-            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))}] {self.vin} live stream start",
+            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 3600))}] {self.label} last-hour log (simulated) begin",
+            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 30))}] {self.label} recent log line",
+            f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))}] {self.label} live stream start",
         ]
 
 
@@ -221,9 +225,9 @@ class ActionTCPHandler(socketserver.StreamRequestHandler):
             self.wfile.write((json.dumps(out) + "\n").encode("utf-8"))
             return
         requested_ip = msg.get("ip", "")
-        print(f"[{vehicle.vin}] action received: ip={requested_ip!r}")
+        print(f"[{vehicle.label}] action received: ip={requested_ip!r}")
         out = vehicle.handle_action(requested_ip)
-        print(f"[{vehicle.vin}] action result: {out}")
+        print(f"[{vehicle.label}] action result: {out}")
         self.wfile.write((json.dumps(out) + "\n").encode("utf-8"))
 
 
@@ -231,18 +235,18 @@ class LogTCPHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         vehicle: Vehicle = self.server.vehicle  # type: ignore[attr-defined]
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
-        print(f"[{vehicle.vin}] logs client connected: {peer}")
+        print(f"[{vehicle.label}] logs client connected: {peer}")
         try:
             for line in vehicle.initial_log_lines():
                 self.request.sendall((line + "\n").encode("utf-8"))
             while True:
                 time.sleep(1)
-                line = f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {vehicle.vin} heartbeat"
+                line = f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {vehicle.label} heartbeat"
                 self.request.sendall((line + "\n").encode("utf-8"))
         except (BrokenPipeError, ConnectionResetError):
             return
         finally:
-            print(f"[{vehicle.vin}] logs client disconnected: {peer}")
+            print(f"[{vehicle.label}] logs client disconnected: {peer}")
 
 
 class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -398,10 +402,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, _handle_exit)
 
     try:
-        for idx, (vin, interval_s) in enumerate(VEHICLES):
+        for idx, (label, interval_s) in enumerate(VEHICLES):
             device_ip = device_ips[idx]
+            uid = hashlib.sha256(label.encode("utf-8")).hexdigest()[:32]
             v = Vehicle(
-                vin=vin,
+                uid=uid,
+                label=label,
                 ping_interval_s=interval_s,
                 device_ip=device_ip,
                 action_port=args.action_port,
@@ -410,7 +416,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             serve_vehicle(v)
             print(
-                f"- {vin}: ip-address {device_ip}, action tcp {device_ip}:{args.action_port}, log tcp {device_ip}:{args.log_port}"
+                f"- {label} ({uid}): ip-address {device_ip}, action tcp {device_ip}:{args.action_port}, log tcp {device_ip}:{args.log_port}"
             )
 
         while True:

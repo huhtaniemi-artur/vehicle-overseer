@@ -8,5 +8,4 @@ Type=oneshot
 WorkingDirectory=/opt/vehicle-overseer-device
 EnvironmentFile=-/etc/vehicle-overseer/device.env
 EnvironmentFile=-/etc/vehicle-overseer/updater.env
-
 ExecStart=/usr/bin/python3 /opt/vehicle-overseer-device/bootstrap/vo_updater.py
