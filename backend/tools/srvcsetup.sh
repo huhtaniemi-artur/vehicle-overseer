@@ -41,7 +41,7 @@ fi
 log "backend=$BACKEND_BASE vin=$VIN reportIface=$REPORT_IFACE actionPort=$ACTION_PORT logPort=$LOG_PORT pingInterval=${PING_INTERVAL_S}s"
 log "installRoot=$INSTALL_ROOT envDir=$ENV_DIR"
 
-mkdir -p "$INSTALL_ROOT/releases" "$ENV_DIR" "$BOOTSTRAP_DIR"
+mkdir -p "$INSTALL_ROOT" "$ENV_DIR" "$BOOTSTRAP_DIR"
 
 FETCH() {
   local url="$1"
@@ -86,15 +86,9 @@ else
   log "keep existing $ENV_DIR/updater.env"
 fi
 
-
-log "install systemd units"
-log "skip unit install here (handled by updater)"
-
 log "install bootstrap updater"
 FETCH "$BACKEND_BASE/api/srvcsetup/files/vo_updater.py" >"$BOOTSTRAP_DIR/vo_updater.py"
 chmod +x "$BOOTSTRAP_DIR/vo_updater.py"
-ln -sfn "$BOOTSTRAP_DIR" "$INSTALL_ROOT/current"
-log "set current -> $BOOTSTRAP_DIR"
 
 if [ -t 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
   log "open editor to finalize config (device.env, updater.env)"
@@ -112,7 +106,7 @@ else
 fi
 
 log "run updater (initial install)"
-/usr/bin/python3 "$BOOTSTRAP_DIR/vo_updater.py" apply \
+/usr/bin/python3 "$BOOTSTRAP_DIR/vo_updater.py" \
   --backend "$BACKEND_BASE" \
   --vin "$VIN" \
   --artifact-key-path "$ENV_DIR/artifact.key" \

@@ -15,6 +15,7 @@ const SYSTEMD_UNITS = [
   'vo-updater.service',
   'vo-updater.timer',
 ];
+const UPDATE_SCRIPT = 'update.sh';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -77,6 +78,16 @@ function ensureSystemdUnits(stagingDir) {
   return { added };
 }
 
+function ensureUpdateScript(stagingDir) {
+  const scriptPath = path.join(stagingDir, UPDATE_SCRIPT);
+  if (fs.existsSync(scriptPath)) return { added: false };
+  const srcPath = path.join(backendRoot, 'tools', UPDATE_SCRIPT);
+  if (!fs.existsSync(srcPath)) return { added: false };
+  fs.copyFileSync(srcPath, scriptPath);
+  fs.chmodSync(scriptPath, 0o755);
+  return { added: true };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) usage(0);
@@ -109,6 +120,7 @@ async function main() {
         );
       }
       ensureSystemdUnits(stagingDir);
+      ensureUpdateScript(stagingDir);
       packagePath = path.join(tmpDir, filename);
       buildTarFromDir(stagingDir, packagePath);
     }

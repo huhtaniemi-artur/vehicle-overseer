@@ -14,7 +14,7 @@ This image is intentionally a clean sandbox: it contains only OS + `systemd` + `
 Install inside the container using your backend’s initial setup endpoint (intended flow):
 - (Requires your backend to expose `GET /api/srvcsetup` that returns a shell script.)
 - Create a dev token on the backend host:
-  - `curl -sS -X POST http://127.0.0.1:3100/api/bootstrap-token -H 'Content-Type: application/json' -d '{"vin":"CAR_001","kind":"dev"}'`
+  - `curl -sS -X POST http://127.0.0.1:3100/api/bootstrap-token -H 'Content-Type: application/json' -d '{"kind":"dev"}'`
 - Then run setup in the container:
   - `curl -fsSL "http://host.docker.internal:3100/api/srvcsetup?vin=CAR_001&token=PASTE_TOKEN" | bash`
   - or `wget -qO- "http://host.docker.internal:3100/api/srvcsetup?vin=CAR_001&token=PASTE_TOKEN" | bash`

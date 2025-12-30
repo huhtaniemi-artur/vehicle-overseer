@@ -444,7 +444,7 @@ async function main() {
 
     if (pathname === '/api/srvcsetup' && req.method === 'GET') {
       const searchParams = new url.URL(req.url, `http://${req.headers.host}`).searchParams;
-      const vin = searchParams.get('vin') || searchParams.get('deviceId') || searchParams.get('device_id');
+      const vin = searchParams.get('vin');
       if (!vin) {
         res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end('vin required\n');
@@ -525,7 +525,7 @@ async function main() {
         const backendBase = `http://${req.headers.host}`;
 
         if (name === 'device.env') {
-          const vin = sp.get('vin') || sp.get('deviceId') || sp.get('device_id') || '';
+          const vin = sp.get('vin') || '';
           const reportIface = sp.get('reportIface') || sp.get('report_iface') || 'tun0';
           const actionPort = Number(sp.get('actionPort') || sp.get('action_port') || 9000);
           const logPort = Number(sp.get('logPort') || sp.get('log_port') || 9100);
@@ -666,7 +666,7 @@ async function main() {
 	    if (pathname === '/api/device/manifest' && req.method === 'GET') {
 	      try {
 	        const searchParams = new url.URL(req.url, `http://${req.headers.host}`).searchParams;
-	        const vin = searchParams.get('vin') || searchParams.get('deviceId') || searchParams.get('device_id');
+	        const vin = searchParams.get('vin');
 	        if (!vin) {
 	          res.writeHead(400, { 'Content-Type': 'application/json' });
 	          return res.end(JSON.stringify({ error: 'vin required' }));
@@ -685,7 +685,7 @@ async function main() {
 	        const artifactPath = `/api/device/artifacts/${encodeURIComponent(artifact.artifactId)}`;
 	        const { algo, sig, keyId } = computeManifestSignature({ vin, version: artifact.version, artifactSha256: artifact.sha256 });
 	        const manifest = {
-	          deviceId: vin,
+	          vin,
 	          version: artifact.version,
 	          artifact: {
 	            id: artifact.artifactId,

@@ -5,6 +5,7 @@ Pull-based updater for the target device/service.
 Intended usage:
 - Runs as a systemd timer (oneshot) as root.
 - Pulls a per-device manifest from the backend and applies updates atomically.
+- Executes update.sh from the artifact to install/remove system files.
 
 Backend endpoints used:
 - GET  /api/device/manifest?vin=VIN
@@ -164,73 +165,56 @@ def _systemctl(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["systemctl", *args], check=True, text=True, capture_output=True)
 
 
-def _switch_symlink_atomic(link_path: str, target_path: str) -> str | None:
-    prev = None
-    try:
-        prev = os.readlink(link_path)
-    except OSError:
-        prev = None
-
-    tmp_link = f"{link_path}.tmp-{int(time.time())}"
-    if os.path.lexists(tmp_link):
-        os.unlink(tmp_link)
-    os.symlink(target_path, tmp_link)
-    os.replace(tmp_link, link_path)
-    return prev
-
-
-def _restart_unit(unit_name: str) -> None:
-    _systemctl(["restart", unit_name])
-    subprocess.run(["systemctl", "is-active", "--quiet", unit_name], check=True)
-
-DEVICE_UNIT = "vehicle-overseer-device.service"
+APP_DIRNAME = "app"
+APP_BACKUP_DIRNAME = "app.bak"
+BOOTSTRAP_DIRNAME = "bootstrap"
+UPDATE_SCRIPT_NAME = "update.sh"
 SYSTEMD_DIR = "/etc/systemd/system"
-UNIT_FILES = (
-    "vehicle-overseer-device.service",
+UPDATER_UNITS = (
     "vo-updater.service",
     "vo-updater.timer",
 )
 
 
-def _install_systemd_units(release_dir: str) -> bool:
-    installed = False
-    for name in UNIT_FILES:
-        candidate_paths = [
-            os.path.join(release_dir, name),
-            os.path.join(release_dir, "systemd", name),
-        ]
-        src = next((p for p in candidate_paths if os.path.isfile(p)), None)
-        if not src:
-            continue
-        dst = os.path.join(SYSTEMD_DIR, name)
-        os.makedirs(SYSTEMD_DIR, exist_ok=True)
-        shutil.copy2(src, dst)
-        installed = True
-    return installed
+def _run_update_script(app_dir: str, action: str, env: dict[str, str]) -> None:
+    script_path = os.path.join(app_dir, UPDATE_SCRIPT_NAME)
+    if not os.path.isfile(script_path):
+        raise ValueError(f"missing {UPDATE_SCRIPT_NAME} in artifact")
+    if os.access(script_path, os.X_OK):
+        cmd = [script_path, action]
+    else:
+        cmd = ["sh", script_path, action]
+    log(f"run {UPDATE_SCRIPT_NAME} {action}")
+    proc = subprocess.run(cmd, cwd=app_dir, env=env)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{UPDATE_SCRIPT_NAME} {action} failed (exit {proc.returncode})")
 
 
-def _cleanup_old_releases(install_root: str, keep_version: str) -> None:
-    releases_dir = os.path.join(install_root, "releases")
-    try:
-        entries = os.listdir(releases_dir)
-    except FileNotFoundError:
+def _replace_self(app_dir: str) -> None:
+    candidate = os.path.join(app_dir, "vo_updater.py")
+    if not os.path.isfile(candidate):
         return
-    for name in entries:
-        if name == keep_version:
-            continue
-        path = os.path.join(releases_dir, name)
-        if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
+    current_path = os.path.realpath(sys.argv[0])
+    try:
+        if os.path.samefile(candidate, current_path):
+            return
+    except FileNotFoundError:
+        pass
+    tmp_path = f"{current_path}.tmp"
+    shutil.copy2(candidate, tmp_path)
+    os.replace(tmp_path, current_path)
+    log(f"updated updater: {current_path}")
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
     backend = args.backend.rstrip("/")
-    vin = args.vin
     install_root = args.install_root
+    app_dir = os.path.join(install_root, APP_DIRNAME)
+    backup_dir = os.path.join(install_root, APP_BACKUP_DIRNAME)
     artifact_key = _load_artifact_key(args.artifact_key_path or _env("VO_ARTIFACT_KEY_PATH"))
     if artifact_key is None:
         raise ValueError("artifact key required (artifacts are always encrypted)")
-    log(f"backend={backend} vin={vin} installRoot={install_root}")
+    log(f"backend={backend} installRoot={install_root}")
     uid_path = (
         args.device_uid_path
         or _env("VO_DEVICE_UID_PATH")
@@ -240,10 +224,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if artifact_key is not None and not device_uid:
         raise ValueError("artifact key configured but no VO_DEVICE_UID provided")
     log(f"deviceUidPath={uid_path}")
+    vin = args.vin
+    if not vin:
+        raise ValueError("VO_VIN required to fetch manifest")
 
-    os.makedirs(os.path.join(install_root, "releases"), exist_ok=True)
-
-    manifest_url = f"{backend}/api/device/manifest?vin={vin}"
+    manifest_vin = urllib.parse.quote(vin, safe="")
+    manifest_url = f"{backend}/api/device/manifest?vin={manifest_vin}"
     log(f"fetch manifest: {manifest_url}")
     manifest = _http_get_json(manifest_url)
 
@@ -258,7 +244,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if not isinstance(artifact_sha256, str) or not artifact_sha256:
         raise ValueError("manifest missing artifact.sha256")
 
-    current_version = _read_text(os.path.join(install_root, "current", "VERSION"))
+    current_version = _read_text(os.path.join(app_dir, "VERSION"))
     if current_version == version and not args.force:
         log(f"already on version {version}; skipping")
         return 0
@@ -281,7 +267,6 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if got_sha256 != artifact_sha256:
         raise ValueError(f"artifact sha256 mismatch: expected {artifact_sha256}, got {got_sha256}")
 
-    release_dir = os.path.join(install_root, "releases", version)
     tmp_dir = tempfile.mkdtemp(prefix="vo-updater-")
     try:
         tar_path = os.path.join(tmp_dir, "artifact.tar.gz")
@@ -292,109 +277,133 @@ def cmd_apply(args: argparse.Namespace) -> int:
         os.makedirs(extract_dir, exist_ok=True)
         log("extract artifact")
         _safe_extract_tar(tar_path, extract_dir)
+        if not os.path.isfile(os.path.join(extract_dir, UPDATE_SCRIPT_NAME)):
+            raise ValueError(f"{UPDATE_SCRIPT_NAME} missing from artifact")
 
-        if not args.dry_run:
-            if os.path.exists(release_dir):
-                shutil.rmtree(release_dir)
-            log(f"install release: {release_dir}")
-            shutil.copytree(extract_dir, release_dir)
-            if not _read_text(os.path.join(release_dir, "VERSION")):
-                _write_text(os.path.join(release_dir, "VERSION"), version + "\n")
+        try:
+            if os.path.isdir(backup_dir):
+                shutil.rmtree(backup_dir, ignore_errors=True)
+            if os.path.isdir(app_dir):
+                shutil.move(app_dir, backup_dir)
+            log(f"install app: {app_dir}")
+            shutil.move(extract_dir, app_dir)
+            if not _read_text(os.path.join(app_dir, "VERSION")):
+                _write_text(os.path.join(app_dir, "VERSION"), version + "\n")
 
-            units_installed = _install_systemd_units(release_dir)
-            if units_installed:
-                log("install systemd units")
-                try:
-                    _systemctl(["daemon-reload"])
-                except subprocess.CalledProcessError as exc:
-                    log("warn: systemctl daemon-reload failed (systemd not running?)")
-                    log("manual: systemctl daemon-reload")
-                    log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
+            env = os.environ.copy()
+            env["VO_INSTALL_ROOT"] = install_root
+            env["VO_APP_DIR"] = app_dir
+            env["VO_APP_BACKUP"] = backup_dir
+            env["VO_BACKEND"] = backend
+            if vin:
+                env["VO_VIN"] = vin
+            _run_update_script(app_dir, "install", env)
 
-            prev_target = _switch_symlink_atomic(os.path.join(install_root, "current"), release_dir)
-            try:
-                log("restart device service")
-                _restart_unit(DEVICE_UNIT)
-            except subprocess.CalledProcessError as exc:
-                log(f"warn: failed to restart {DEVICE_UNIT} (systemd not running?)")
-                log(f"manual: systemctl restart {DEVICE_UNIT}")
-                log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
-            except Exception:
-                if prev_target:
-                    _switch_symlink_atomic(os.path.join(install_root, "current"), prev_target)
-                    try:
-                        _restart_unit(DEVICE_UNIT)
-                    except Exception:
-                        pass
-                raise
-            try:
-                log("enable updater timer")
-                _systemctl(["enable", "--now", "vo-updater.timer"])
-            except subprocess.CalledProcessError as exc:
-                log("warn: failed to enable updater timer (systemd not running?)")
-                log("manual: systemctl enable --now vo-updater.timer")
-                log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
-            _cleanup_old_releases(install_root, version)
-            log("cleanup old releases")
+            if os.path.isdir(backup_dir):
+                shutil.rmtree(backup_dir, ignore_errors=True)
+            _replace_self(app_dir)
+        except Exception:
+            log("warn: update failed; attempting rollback")
+            if os.path.isdir(app_dir):
+                shutil.rmtree(app_dir, ignore_errors=True)
+            if os.path.isdir(backup_dir):
+                shutil.move(backup_dir, app_dir)
+            raise
 
-            state = {
-                "deviceId": vin,
-                "version": version,
-                "artifactSha256": artifact_sha256,
-                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-            _write_text(os.path.join(install_root, "state.json"), json.dumps(state, indent=2) + "\n")
-            log("update complete")
+        state = {
+            "vin": vin,
+            "version": version,
+            "artifactSha256": artifact_sha256,
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _write_text(os.path.join(install_root, "state.json"), json.dumps(state, indent=2) + "\n")
+        log("update complete")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return 0
 
 
+def cmd_remove(args: argparse.Namespace) -> int:
+    install_root = args.install_root
+    app_dir = os.path.join(install_root, APP_DIRNAME)
+    backup_dir = os.path.join(install_root, APP_BACKUP_DIRNAME)
+    bootstrap_dir = os.path.join(install_root, BOOTSTRAP_DIRNAME)
+    log(f"remove installRoot={install_root}")
+
+    env = os.environ.copy()
+    env["VO_INSTALL_ROOT"] = install_root
+    env["VO_APP_DIR"] = app_dir
+    env["VO_APP_BACKUP"] = backup_dir
+    if args.backend:
+        env["VO_BACKEND"] = args.backend
+
+    if os.path.isfile(os.path.join(app_dir, UPDATE_SCRIPT_NAME)):
+        _run_update_script(app_dir, "remove", env)
+    else:
+        log(f"warn: {UPDATE_SCRIPT_NAME} not found; skipping remove hook")
+
+    for unit in UPDATER_UNITS:
+        try:
+            _systemctl(["disable", "--now", unit])
+        except FileNotFoundError:
+            log("warn: systemctl not found (skip disabling updater)")
+            break
+        except subprocess.CalledProcessError as exc:
+            log(f"warn: failed to disable {unit} (systemd not running?)")
+            log(f"manual: systemctl disable --now {unit}")
+            log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
+
+    for unit in UPDATER_UNITS:
+        unit_path = os.path.join(SYSTEMD_DIR, unit)
+        if os.path.exists(unit_path):
+            os.remove(unit_path)
+
+    shutil.rmtree(app_dir, ignore_errors=True)
+    shutil.rmtree(backup_dir, ignore_errors=True)
+    shutil.rmtree(bootstrap_dir, ignore_errors=True)
+    state_path = os.path.join(install_root, "state.json")
+    if os.path.exists(state_path):
+        os.remove(state_path)
+
+    log("remove complete")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="cmd")
-
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--backend", default=_env("VO_BACKEND", "http://localhost:3100"), help="Backend base URL")
-    common.add_argument("--vin", default=_env("VO_VIN"), required=_env("VO_VIN") is None, help="Device ID/VIN")
-    common.add_argument(
+    parser.add_argument("cmd", nargs="?", choices=["remove"], help="Remove app + updater")
+    parser.add_argument("--backend", default=_env("VO_BACKEND", "http://localhost:3100"), help="Backend base URL")
+    parser.add_argument(
         "--install-root",
         default=_env("VO_INSTALL_ROOT", "/opt/vehicle-overseer-device"),
-        help="Install root with releases/ and current/ symlink",
+        help="Install root with app/ directory",
     )
-    common.add_argument(
+    parser.add_argument(
+        "--vin",
+        default=_env("VO_VIN"),
+        help="Device label (vin) for manifest lookup (or set VO_VIN)",
+    )
+    parser.add_argument("--force", action="store_true", help="Apply even if version matches current")
+    parser.add_argument(
         "--artifact-key-path",
         default=None,
         help="Path to base64 artifact key (or set VO_ARTIFACT_KEY_PATH)",
     )
-    common.add_argument(
+    parser.add_argument(
         "--device-uid",
         default=_env("VO_DEVICE_UID"),
         help="Device UID for encrypted artifact downloads (or set VO_DEVICE_UID)",
     )
-    common.add_argument(
+    parser.add_argument(
         "--device-uid-path",
         default=_env("VO_DEVICE_UID_PATH"),
         help="Path to device UID file (default: /etc/vehicle-overseer/device.uid)",
     )
 
-    p_apply = sub.add_parser("apply", parents=[common], help="Fetch manifest and apply if needed")
-    p_apply.add_argument("--force", action="store_true", help="Apply even if version matches current")
-    p_apply.add_argument("--dry-run", action="store_true", help="Download + verify only; do not install")
-    p_apply.set_defaults(func=cmd_apply)
-
-    # Back-compat: allow running without explicit subcommand (treated as `apply`)
-    if len(sys.argv) >= 2 and sys.argv[1] != "apply":
-        sys.argv.insert(1, "apply")
-    if len(sys.argv) == 1:
-        sys.argv.append("apply")
-
     args = parser.parse_args()
-    func = getattr(args, "func", None)
-    if func is None:
-        parser.print_help()
-        raise SystemExit(2)
-    raise SystemExit(func(args))
+    if args.cmd == "remove":
+        raise SystemExit(cmd_remove(args))
+    raise SystemExit(cmd_apply(args))
 
 
 if __name__ == "__main__":
