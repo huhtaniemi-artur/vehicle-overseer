@@ -10,6 +10,11 @@ import initSqlJs from 'sql.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(__dirname, '..');
+const SYSTEMD_UNITS = [
+  'vehicle-overseer-device.service',
+  'vo-updater.service',
+  'vo-updater.timer',
+];
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -56,6 +61,22 @@ function buildTarFromDir(dirPath, outTarPath) {
   }
 }
 
+function ensureSystemdUnits(stagingDir) {
+  const srcDir = path.join(backendRoot, 'tools', 'systemd');
+  if (!fs.existsSync(srcDir)) return { added: false };
+  let added = false;
+  const systemdDir = path.join(stagingDir, 'systemd');
+  for (const name of SYSTEMD_UNITS) {
+    const rootCandidate = path.join(stagingDir, name);
+    const systemdCandidate = path.join(systemdDir, name);
+    if (fs.existsSync(rootCandidate) || fs.existsSync(systemdCandidate)) continue;
+    fs.mkdirSync(systemdDir, { recursive: true });
+    fs.copyFileSync(path.join(srcDir, name), systemdCandidate);
+    added = true;
+  }
+  return { added };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) usage(0);
@@ -78,8 +99,18 @@ async function main() {
   try {
     if (args.dir) {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vo-import-'));
+      const stagingDir = path.join(tmpDir, 'staging');
+      fs.mkdirSync(stagingDir, { recursive: true });
+      for (const entry of fs.readdirSync(args.dir)) {
+        fs.cpSync(
+          path.join(args.dir, entry),
+          path.join(stagingDir, entry),
+          { recursive: true }
+        );
+      }
+      ensureSystemdUnits(stagingDir);
       packagePath = path.join(tmpDir, filename);
-      buildTarFromDir(args.dir, packagePath);
+      buildTarFromDir(stagingDir, packagePath);
     }
 
     const buf = fs.readFileSync(packagePath);

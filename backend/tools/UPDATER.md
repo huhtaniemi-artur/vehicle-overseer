@@ -44,6 +44,7 @@ Import a new version on the backend with:
 - `node backend/tools/import_version.js --version v0.1.0 --file ./path/to/vehicle-overseer-device_v0.1.0.tar.gz`
 - or build a bundle from a directory:
   - `node backend/tools/import_version.js --version v0.1.0 --dir ./release-dir`
+  - When `systemd/` units are missing in the release dir, the importer copies them from `backend/tools/systemd/`.
 
 If no artifacts exist, `GET /api/device/manifest` returns `404`.
 
