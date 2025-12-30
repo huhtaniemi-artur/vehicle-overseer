@@ -212,6 +212,8 @@
     let selectingVin = null;
     let pendingIp = null;
     let updatesSocket = null;
+    let serverTimeOffsetMs = 0;
+    const getServerNow = () => Date.now() - serverTimeOffsetMs;
     const onlineContainer = document.createElement('div');
     const offlineContainer = document.createElement('div');
     entriesEl.appendChild(onlineContainer);
@@ -240,7 +242,7 @@
     }
 
     function updateLastSeenTick() {
-      const now = Date.now();
+      const now = getServerNow();
       entryNodes.forEach(({ lastSeenEl }, vin) => {
         const e = entries.get(vin);
         if (!e) return;
@@ -291,7 +293,7 @@
       node.root.className = `entry ${entry.status}${entry.flash ? ' flash' : ''}`;
       node.titleEl.innerHTML = `<strong>${entry.vin}</strong> — ${entry.ip || 'n/a'} · `;
       node.titleEl.appendChild(node.lastSeenEl);
-      node.lastSeenEl.textContent = `${Math.round((Date.now() - entry.lastUpdate)/1000)}s`;
+      node.lastSeenEl.textContent = `${Math.round((getServerNow() - entry.lastUpdate)/1000)}s`;
       const stageMsg = entry.stage || '';
       node.ipBtn.textContent = entry.selectedIp || 'select mqtt';
       node.ipBtn.disabled = false;
@@ -405,6 +407,9 @@
       updatesSocket = ws;
       ws.onmessage = (evt) => {
         const msg = JSON.parse(evt.data);
+        if (typeof msg.serverNow === 'number') {
+          serverTimeOffsetMs = Date.now() - msg.serverNow;
+        }
         if (msg.type === 'init') {
           config = msg.config;
           entries.clear();

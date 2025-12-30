@@ -379,6 +379,9 @@ async function main() {
 
   // WebSocket broadcast helper
   const broadcast = (payload) => {
+    if (payload && typeof payload === 'object' && payload.serverNow === undefined) {
+      payload.serverNow = Date.now();
+    }
     const msg = JSON.stringify(payload);
     wsServer.clients.forEach((client) => {
       if (client.readyState === 1) client.send(msg);
@@ -875,7 +878,8 @@ const logServer = new WebSocketServer({ noServer: true });
     socket.send(JSON.stringify({
       type: 'init',
       entries: snapshot,
-      config: getClientConfig()
+      config: getClientConfig(),
+      serverNow: Date.now()
     }));
   });
 
