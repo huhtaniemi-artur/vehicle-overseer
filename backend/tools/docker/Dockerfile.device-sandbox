@@ -11,7 +11,17 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Create common directories but do not install any project code/config.
-RUN mkdir -p /opt/vehicle-overseer-device /etc/vehicle-overseer
+RUN mkdir -p /opt/vehicle-overseer-device /etc/vehicle-overseer /opt/fordvda \
+  && cat > /opt/fordvda/properties.json <<'EOF'
+{
+    "backend": {
+        "mqttServerIp": "tcp://172.18.88.2:11883",
+        "mqttUsername": "admin",
+        "mqttPassword": "adminpwd",
+        "clientId": "simulator"
+    }
+}
+EOF
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

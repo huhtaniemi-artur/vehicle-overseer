@@ -4,7 +4,7 @@
   "httpPort": 3100,
   "defaultSshUser": "unikie",
   "defaultServiceName": "usrapp.service",
-  "defaultMqttKey": "mqttserverip",
+  "defaultMqttKey": "mqttServerIp",
   "deviceActionPort": 9000,
   "deviceLogPort": 9100,
   "devicePingIntervalS": 10,

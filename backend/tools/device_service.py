@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import re
 import os
 import re
 import select
@@ -115,6 +116,7 @@ class Device:
         log_port: int,
         ping_interval_s: float,
         jsonpath: str,
+        mqtt_key: str,
         report_iface: str | None,
     ) -> None:
         self.uid = uid
@@ -126,6 +128,7 @@ class Device:
         self.log_port = log_port
         self.ping_interval_s = ping_interval_s
         self.jsonpath = jsonpath
+        self.mqtt_key = mqtt_key
         self.report_iface = report_iface
         self._action_count = 0
         self._lock = threading.Lock()
@@ -169,7 +172,6 @@ class Device:
                 "ip-address": self.reported_ip,
                 "state": "not implemented",
                 "data": {
-                    "jsonpath": self.jsonpath,
                     "actionPort": self.action_port,
                     "logPort": self.log_port,
                     "version": {
@@ -186,13 +188,102 @@ class Device:
                 print(f"[{self.label}] ping failed: {exc}")
             time.sleep(self.ping_interval_s)
 
+    def _replace_mqtt_value(self, current: str, requested_ip: str) -> str:
+        requested = requested_ip.strip()
+        if not requested:
+            return requested
+        if "://" in requested:
+            return requested
+        if ":" in requested:
+            scheme = re.match(r"^[^:]+://", current)
+            if scheme:
+                return f"{scheme.group(0)}{requested}"
+            return requested
+        match = re.match(r"^(?P<prefix>[^:]+://)?(?P<host>[^:/]+)(?P<suffix>.*)$", current)
+        if match:
+            return f"{match.group('prefix') or ''}{requested}{match.group('suffix')}"
+        return requested
+
+    def _find_key_paths(self, data: object, key: str) -> list[list[str]]:
+        paths: list[list[str]] = []
+
+        def walk(obj: object, prefix: list[str]) -> None:
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    next_prefix = prefix + [k]
+                    if k == key:
+                        paths.append(next_prefix)
+                    walk(v, next_prefix)
+            elif isinstance(obj, list):
+                for idx, item in enumerate(obj):
+                    walk(item, prefix + [str(idx)])
+
+        walk(data, [])
+        return paths
+
+    def _get_by_path(self, data: object, path: list[str]) -> object:
+        cur: object = data
+        for key in path:
+            if not isinstance(cur, dict) or key not in cur:
+                raise ValueError(f"mqtt key path {'.'.join(path)!r} missing in {self.jsonpath}")
+            cur = cur[key]
+        return cur
+
+    def _set_by_path(self, data: object, path: list[str], value: object) -> None:
+        cur: object = data
+        for key in path[:-1]:
+            if not isinstance(cur, dict) or key not in cur:
+                raise ValueError(f"mqtt key path {'.'.join(path)!r} missing in {self.jsonpath}")
+            cur = cur[key]
+        if not isinstance(cur, dict):
+            raise ValueError(f"mqtt key path {'.'.join(path)!r} missing in {self.jsonpath}")
+        cur[path[-1]] = value
+
+    def _update_properties_json(self, requested_ip: str) -> str:
+        try:
+            with open(self.jsonpath, "r", encoding="utf-8") as f:
+                raw = f.read()
+        except FileNotFoundError as exc:
+            raise ValueError(f"{self.jsonpath} not found!") from exc
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{self.jsonpath} is invalid json: {exc}") from exc
+
+        if "." in self.mqtt_key:
+            key_path = [p for p in self.mqtt_key.split(".") if p]
+        else:
+            paths = self._find_key_paths(data, self.mqtt_key)
+            if not paths:
+                raise ValueError(f"mqtt key {self.mqtt_key!r} missing in {self.jsonpath}")
+            if len(paths) > 1:
+                raise ValueError(f"mqtt key {self.mqtt_key!r} is ambiguous; use a dotted path")
+            key_path = paths[0]
+        current = self._get_by_path(data, key_path)
+        if not isinstance(current, str):
+            raise ValueError(f"mqtt key {self.mqtt_key!r} must be a string")
+
+        new_value = self._replace_mqtt_value(current, requested_ip)
+        self._set_by_path(data, key_path, new_value)
+        new_raw = json.dumps(data, indent=2) + "\n"
+
+        tmp_path = f"{self.jsonpath}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(new_raw)
+        os.replace(tmp_path, self.jsonpath)
+        return new_value
+
     def handle_action(self, requested_ip: str) -> dict:
+        if not requested_ip:
+            return {"ok": False, "error": "missing ip"}
         with self._lock:
             self._action_count += 1
-            action_n = self._action_count
-        if action_n % 2 == 1:
-            return {"ok": False, "error": "Unable to write destination file (simulated)"}
-        return {"ok": True}
+            try:
+                new_value = self._update_properties_json(requested_ip)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+        return {"ok": True, "key": self.mqtt_key, "value": new_value}
 
 
 class ActionTCPHandler(socketserver.StreamRequestHandler):
@@ -308,7 +399,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         bind_host = args.bind_host
 
     label = args.label
-    jsonpath = args.jsonpath or f"/opt/{label.lower()}/properties.json"
+    if not args.jsonpath:
+        print("JSON path is required (set --jsonpath or VO_JSONPATH)")
+        return 2
+    jsonpath = args.jsonpath
+    mqtt_key = args.mqtt_key
     print(
         f"Device starting uid={device_uid!r} label={label!r} -> {args.backend} (ip-address {reported_ip}, bind {bind_host}, jsonpath {jsonpath})"
     )
@@ -327,6 +422,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             log_port=args.log_port,
             ping_interval_s=args.ping_interval_s,
             jsonpath=jsonpath,
+            mqtt_key=mqtt_key,
             report_iface=report_iface,
         )
         serve_device(device)
@@ -369,8 +465,13 @@ def main() -> None:
     )
     common.add_argument(
         "--jsonpath",
-        default=None,
-        help="Value sent as data.jsonpath in POST pings (default: /opt/_label_/)",
+        default=os.environ.get("VO_JSONPATH"),
+        help="Path to properties.json (required; set VO_JSONPATH)",
+    )
+    common.add_argument(
+        "--mqtt-key",
+        default=os.environ.get("VO_MQTT_KEY") or 'mqttServerIp',
+        help="JSON key to update inside properties.json (default: mqttServerIp)",
     )
 
     p_run = sub.add_parser("run", help="Run device service", parents=[common])

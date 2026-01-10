@@ -541,6 +541,8 @@ async function main() {
             `VO_WAIT_TIMEOUT_S=0`,
             `VO_ACTION_PORT=${actionPort}`,
             `VO_LOG_PORT=${logPort}`,
+            `VO_JSONPATH=/opt/${label}/properties.json`,
+            `VO_MQTT_KEY=${config.defaultMqttKey}`,
             `VO_PING_INTERVAL_S=${pingIntervalS}`,
             `VO_BIND_HOST=auto`,
             `VO_DEVICE_UID_PATH=/etc/vehicle-overseer/device.uid`,

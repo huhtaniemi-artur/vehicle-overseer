@@ -182,7 +182,6 @@ class Vehicle:
                 "ip-address": self.device_ip,
                 "state": "not implemented",
                 "data": {
-                    "jsonpath": f"/opt/{self.label.lower()}/properties.json",
                     "actionPort": self.action_port,
                     "logPort": self.log_port,
                 },
