@@ -235,10 +235,31 @@
     }
 
     function formatAge(ms) {
-      const sec = Math.floor(ms / 1000);
-      if (sec < 60) return `${sec}s`;
-      const min = Math.floor(sec / 60);
-      return `${min}m`;
+      let total = Math.max(0, Math.ceil(ms / 1000));
+      const days = Math.floor(total / 86400);
+      total -= days * 86400;
+      const hours = Math.floor(total / 3600);
+      total -= hours * 3600;
+      const mins = Math.floor(total / 60);
+      const secs = total - mins * 60;
+      const parts = [];
+      if (days) parts.push(`${days}d`);
+      if (hours || parts.length) parts.push(`${hours}h`);
+      if (mins || parts.length) parts.push(`${mins}m`);
+      parts.push(`${secs}s`);
+      return parts.join(' ');
+    }
+
+    function formatLastSeenDate(tsMs) {
+      return new Date(tsMs).toLocaleString(undefined, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
     }
 
     function updateLastSeenTick() {
@@ -247,6 +268,7 @@
         const e = entries.get(uid);
         if (!e) return;
         lastSeenEl.textContent = formatAge(now - e.lastUpdate);
+        lastSeenEl.title = formatLastSeenDate(e.lastUpdate);
       });
     }
     setInterval(updateLastSeenTick, 1000);
@@ -295,7 +317,8 @@
       node.root.className = `entry ${entry.status}${entry.flash ? ' flash' : ''}`;
       node.titleEl.innerHTML = `<strong>${displayName}</strong> — ${entry.ip || 'n/a'} · `;
       node.titleEl.appendChild(node.lastSeenEl);
-      node.lastSeenEl.textContent = `${Math.round((getServerNow() - entry.lastUpdate)/1000)}s`;
+      node.lastSeenEl.textContent = formatAge(getServerNow() - entry.lastUpdate);
+      node.lastSeenEl.title = formatLastSeenDate(entry.lastUpdate);
       const stageMsg = entry.stage || '';
       node.ipBtn.textContent = entry.selectedIp || 'select mqtt';
       node.ipBtn.disabled = false;
