@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 log() { printf '[update.sh] %s\n' "$*" >&2; }
 

@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/sh
+set -eu
 
 log() { printf '[srvcsetup] %s\n' "$*" >&2; }
 
-trap 'rc=$?; log "ERROR (exit $rc) at line $LINENO: $BASH_COMMAND"; exit $rc' ERR
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then log "ERROR (exit $rc) at line ${LINENO:-?}"; fi; exit $rc' EXIT
 
 # This script is intended to be served by the backend at `/api/srvcsetup`.
 # The backend replaces the __PLACEHOLDER__ values before returning it.
@@ -44,7 +44,7 @@ log "installRoot=$INSTALL_ROOT envDir=$ENV_DIR"
 mkdir -p "$INSTALL_ROOT" "$ENV_DIR" "$BOOTSTRAP_DIR"
 
 FETCH() {
-  local url="$1"
+  url="$1"
   log "fetch: $url"
   curl -fsSL "$url"
 }
@@ -60,8 +60,11 @@ fi
 KEY_URL="$BACKEND_BASE/api/device/key?token=$TOKEN"
 log "fetch: $KEY_URL"
 KEY_RAW="$(curl -fsSL "$KEY_URL")"
-DEVICE_UID="$(printf '%s' "$KEY_RAW" | awk 'NR==1 {print $1}')"
-KEY_B64="$(printf '%s' "$KEY_RAW" | awk 'NR==2 {print $1}')"
+NL='
+'
+DEVICE_UID=${KEY_RAW%%"$NL"*}
+KEY_B64=${KEY_RAW#*"$NL"}
+KEY_B64=${KEY_B64%%"$NL"*}
 if [ -z "$KEY_B64" ] || [ -z "$DEVICE_UID" ]; then
   log "failed to parse key response"
   exit 3

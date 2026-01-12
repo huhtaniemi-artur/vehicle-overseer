@@ -146,7 +146,10 @@ def _run_update_script(app_dir: str, action: str, env: dict[str, str]) -> None:
     if os.access(script_path, os.X_OK):
         cmd = [script_path, action]
     else:
-        cmd = ["sh", script_path, action]
+        shell = shutil.which("bash") or shutil.which("sh")
+        if not shell:
+            raise RuntimeError("no shell found to run update.sh (install bash or sh)")
+        cmd = [shell, script_path, action]
     log(f"run {UPDATE_SCRIPT_NAME} {action}")
     proc = subprocess.run(cmd, cwd=app_dir, env=env)
     if proc.returncode != 0:
