@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Single-device service stub (simulated) for Linux deployments.
+Single-device pinger service.
 
 - Waits for network/VPN interface (default: tun0) to have an IPv4 address.
 - Posts periodic status pings to the backend (/api/ping).
 - Listens for per-action TCP connections from the backend (backend -> device) and returns
-  only final success or error (action itself is simulated).
-- Exposes a TCP log stream endpoint that the backend can proxy to the UI (simulated).
+  only final success or error.
+- Exposes a TCP log stream endpoint that the backend can proxy to the UI.
 """
 
 from __future__ import annotations
@@ -364,7 +364,6 @@ def serve_device(device: Device) -> None:
         log_server.device = device  # type: ignore[attr-defined]
     except OSError as exc:
         print(f"[net] failed to bind TCP servers on {device.bind_host}:{device.action_port}/{device.log_port}: {exc}")
-        print("[net] if you are also running the multi-vehicle simulator, set --bind-host auto (default) or change ports")
         raise
 
     threading.Thread(target=action_server.serve_forever, daemon=True).start()

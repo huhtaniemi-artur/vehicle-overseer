@@ -58,8 +58,8 @@ Architecture overview (current implementation + clarified target behavior)
     - `backend/tools/device_service.py` runs as a single-device process (intended for systemd).
     - Waits for an IPv4 on a configured interface (default `tun0`) and reports that address as `ip-address` in `POST /api/ping`.
     - Exposes TCP endpoints for backend→device connections:
-      - action endpoint: `<bind-host>:<action-port>` returns `{ok:true|false, error?}` (simulated)
-      - log endpoint: `<bind-host>:<log-port>` streams newline-delimited logs (simulated)
+      - action endpoint: `<bind-host>:<action-port>` returns `{ok:true|false, error?}`
+      - log endpoint: `<bind-host>:<log-port>` streams newline-delimited logs
     - Reports `actionPort` / `logPort` in the `data` section of `POST /api/ping` (so ports can be per-device).
     - Reports version info in `data.version` (e.g. `serviceVersion`, `buildId`, `updaterVersion`).
     - Note: on a single host, you can’t run two instances on the same `<bind-host>:<port>`; either bind to different IPs or use different ports.
