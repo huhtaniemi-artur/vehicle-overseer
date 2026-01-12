@@ -111,6 +111,7 @@ fi
 log "run updater (initial install)"
 /usr/bin/python3 "$BOOTSTRAP_DIR/vo_updater.py" \
   --backend "$BACKEND_BASE" \
+  --force \
   --artifact-key-path "$ENV_DIR/artifact.key" \
   --device-uid-path "$ENV_DIR/device.uid"
 

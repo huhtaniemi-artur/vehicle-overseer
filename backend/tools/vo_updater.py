@@ -73,6 +73,16 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _read_state(path: str) -> dict | None:
+    raw = _read_text(path)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
 def _load_artifact_key(path: str | None) -> bytes | None:
     if not path:
         return None
@@ -209,6 +219,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if not isinstance(artifact_sha256, str) or not artifact_sha256:
         raise ValueError("manifest missing artifact.sha256")
 
+    state_path = os.path.join(install_root, "state.json")
+    state = _read_state(state_path)
+    if not args.force and state and state.get("artifactSha256") == artifact_sha256:
+        log(f"artifact {artifact_sha256} already installed; skipping")
+        return 0
+
     full_artifact_url = urllib.parse.urljoin(f"{backend}/", artifact_url.lstrip("/"))
     sep = "&" if "?" in full_artifact_url else "?"
     full_artifact_url = f"{full_artifact_url}{sep}uid={device_uid}"
@@ -336,6 +352,7 @@ def main() -> None:
         default=_env("VO_INSTALL_ROOT", "/opt/vehicle-overseer-device"),
         help="Install root with app/ directory",
     )
+    parser.add_argument("--force", action="store_true", help="Apply even if artifact matches current")
     parser.add_argument(
         "--artifact-key-path",
         default=None,
