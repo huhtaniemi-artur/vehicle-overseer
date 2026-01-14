@@ -95,9 +95,9 @@ async function main() {
   if ((args.file ? 1 : 0) + (args.dir ? 1 : 0) !== 1) usage(2);
 
   const configPath = path.join(backendRoot, 'config.json');
-  const fallbackConfigPath = path.join(backendRoot, 'config.example.json');
-  const cfgFile = fs.existsSync(configPath) ? configPath : fallbackConfigPath;
-  const config = JSON.parse(fs.readFileSync(cfgFile, 'utf-8'));
+  const config = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+    : {};
 
   const dbPath = path.resolve(backendRoot, args.db || config.dbPath || './data/vehicle_overseer.sqlite');
   const dataDir = path.resolve(backendRoot, 'data');

@@ -12,7 +12,7 @@ Components
 
 Quick start
 1) Requirements: Node.js 18+; SQLite CLI (`sqlite3`).
-2) Configure backend: `cp backend/config.example.json backend/config.json` and adjust ports/users/service names/IP list.
+2) Configure backend: create `backend/config.json` (optional). If missing, the backend uses internal defaults.
    - `deviceActionPort` / `deviceLogPort` define the per-device TCP ports the backend will connect to for actions/logs (host = the device `ip-address` reported via `/api/ping`).
 3) Initialize DB: `mkdir -p backend/data` then `sqlite3 backend/data/vehicle_overseer.sqlite < backend/schema.sql`.
 4) Install backend deps: `cd backend && npm install`.

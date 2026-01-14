@@ -4,12 +4,32 @@ Backend scaffold
 This is a Node.js backend for the web switcher concept. Implement the API/WebSocket/log streaming behavior per `architecture.txt` and `architecture.md`.
 
 Setup
-1) Copy config: `cp config.example.json config.json` and adjust paths/ports/commands/users/IP list.
+1) Create `config.json` (optional). If missing, the backend uses internal defaults.
 2) Install deps: `npm install`.
 3) Run: `npm start` (starts HTTP + WebSocket server; see endpoints below).
 
+Example config.json
+```json
+{
+	"dbPath": "./data/vehicle_overseer.sqlite",
+	"httpHost": "0.0.0.0",
+	"httpPort": 3100,
+	"defaultSshUser": "user",
+	"defaultServiceName": "usrapp.service",
+	"defaultMqttKey": "mqttServerIp",
+	"deviceActionPort": 9000,
+	"deviceLogPort": 9100,
+	"devicePingIntervalS": 10,
+	"ipList": [
+		"tcp://10.99.2.10:11883",
+		"tcp://10.99.12.10:11883",
+		"tcp://10.102.1.10:11883"
+	]
+}
+```
+
 Key files
-- `config.example.json`: Defaults for service name, MQTT key, IP list, DB path, plus `deviceActionPort`/`deviceLogPort` for per-device action/log TCP endpoints (host = device `ip-address`).
+- `config.json`: Optional runtime config (if missing, backend uses internal defaults).
 - `schema.sql`: Tables for update artifacts/versions, per-device update targets, device keys, and bootstrap tokens.
 - `src/index.js`: Minimal functional server with HTTP endpoints, shared WebSocket for UI, per-device log WebSocket proxy, SQLite (sql.js/WASM) wiring for update metadata, and per-action backend→device connection stub (TCP in dev; later real device integration).
 - `backend/tools/simulator.py`: Python simulator that acts like a device/service (POST pings with uid + label, TCP action endpoint, TCP log stream).

@@ -14,15 +14,32 @@ import initSqlJs from 'sql.js';
 import { WebSocketServer } from 'ws';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const rootDir = path.resolve(__dirname, '..');
+// Runtime root directory for config/data/assets.
+// - Rely on process.cwd() so systemd can control it via WorkingDirectory=.
+// - Fallback to repo backend/ directory for local dev.
+const devRootDir = path.resolve(__dirname, '..');
+const rootDir = process.cwd() || devRootDir;
 
 async function main() {
-  // Load config (config.json or fallback to example)
+  const defaultConfig = {
+    dbPath: './data/vehicle_overseer.sqlite',
+    httpHost: '0.0.0.0',
+    httpPort: 3100,
+    defaultSshUser: null,
+    defaultServiceName: null,
+    defaultMqttKey: 'mqttServerIp',
+    deviceActionPort: 9000,
+    deviceLogPort: 9100,
+    devicePingIntervalS: 10,
+    ipList: []
+  };
+
+  // Load config (config.json if present; otherwise internal defaults)
   const loadConfig = () => {
     const preferred = path.join(rootDir, 'config.json');
-    const fallback = path.join(rootDir, 'config.example.json');
-    const file = fs.existsSync(preferred) ? preferred : fallback;
-    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+    if (!fs.existsSync(preferred)) return { ...defaultConfig };
+    const parsed = JSON.parse(fs.readFileSync(preferred, 'utf-8'));
+    return { ...defaultConfig, ...parsed };
   };
 
   const config = loadConfig();
