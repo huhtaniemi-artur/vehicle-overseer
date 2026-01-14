@@ -544,6 +544,7 @@ async function main() {
           const content = [
             `VO_BACKEND=${backendBase}`,
             `VO_LABEL=${label}`,
+            `VO_SERVICE_NAME=${config.defaultServiceName ?? ''}`,
             `VO_REPORT_IFACE=${reportIface}`,
             `VO_WAIT_TIMEOUT_S=0`,
             `VO_ACTION_PORT=${actionPort}`,

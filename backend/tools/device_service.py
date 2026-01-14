@@ -127,6 +127,7 @@ class Device:
         jsonpath: str,
         mqtt_key: str,
         report_iface: str | None,
+        service_name: str,
     ) -> None:
         self.uid = uid
         self.label = label
@@ -142,6 +143,7 @@ class Device:
         self._action_count = 0
         self._lock = threading.Lock()
         self._service_version = self._read_service_version()
+        self.service_name = service_name
         self._build_id = os.environ.get("VO_BUILD_ID") or None
         self._updater_version = os.environ.get("VO_UPDATER_VERSION") or None
 
@@ -283,6 +285,11 @@ class Device:
         os.replace(tmp_path, self.jsonpath)
         return new_value
 
+    def _restart_service(self) -> None:
+        if not self.service_name:
+            return
+        subprocess.run(["systemctl", "restart", self.service_name], check=True, timeout=10)
+
     def handle_action(self, requested_ip: str) -> dict:
         if not requested_ip:
             return {"ok": False, "error": "missing ip"}
@@ -292,7 +299,17 @@ class Device:
                 new_value = self._update_properties_json(requested_ip)
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
-        return {"ok": True, "key": self.mqtt_key, "value": new_value}
+
+            if self.service_name:
+                try:
+                    self._restart_service()
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+                    return {"ok": False, "error": f"service restart failed: {exc}"}
+                restarted = True
+            else:
+                restarted = False
+
+        return {"ok": True, "key": self.mqtt_key, "value": new_value, "restarted": restarted}
 
 
 class ActionTCPHandler(socketserver.StreamRequestHandler):
@@ -432,6 +449,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             jsonpath=jsonpath,
             mqtt_key=mqtt_key,
             report_iface=report_iface,
+            service_name=args.service_name,
         )
         serve_device(device)
         while True:
@@ -454,6 +472,11 @@ def main() -> None:
         help="Path to device UID file",
     )
     common.add_argument("--label", default=os.environ.get("VO_LABEL"), help="Display label for UI/logs")
+    common.add_argument(
+        "--service-name",
+        default=os.environ.get("VO_SERVICE_NAME") or "",
+        help="Optional systemd unit name to restart after applying selection (or set VO_SERVICE_NAME). If empty, restart is skipped.",
+    )
     common.add_argument("--action-port", type=int, default=_env_int("VO_ACTION_PORT", 9000), help="TCP port for action endpoint")
     common.add_argument("--log-port", type=int, default=_env_int("VO_LOG_PORT", 9100), help="TCP port for log endpoint")
     common.add_argument(
