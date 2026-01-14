@@ -53,8 +53,6 @@ If no artifacts exist, `GET /api/device/manifest` returns `404`.
 ## Notes
 
 - Artifact integrity is checked by SHA256.
-- Manifest authentication is optional via RSA signatures:
-  - Backend signs using `updateSigningKeyPath` (private key, PEM).
 - In-transfer encryption (always enabled):
   - Setup fetches a per-device base64 key from `GET /api/device/key?token=...`.
   - Response format is plain text: first line `deviceUid`, second line `keyB64`.

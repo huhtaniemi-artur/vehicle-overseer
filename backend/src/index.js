@@ -123,8 +123,6 @@ async function main() {
   const OFFLINE_TIMEOUT_MS = Math.round((devicePingIntervalS + 2) * 1000);
   const deviceActionPort = config.deviceActionPort;
   const deviceLogPort = config.deviceLogPort;
-  const updateSigningKeyPath = process.env.VO_UPDATE_SIGNING_KEY_PATH || config.updateSigningKeyPath || null;
-  const updateSigningKeyId = process.env.VO_UPDATE_SIGNING_KEY_ID || config.updateSigningKeyId || null;
 
   const artifactsDir = path.resolve(dataDir, 'artifacts');
   fs.mkdirSync(artifactsDir, { recursive: true });
@@ -293,22 +291,6 @@ async function main() {
     );
   };
 
-  const signingKeyPem = (() => {
-    if (!updateSigningKeyPath) return null;
-    try {
-      return fs.readFileSync(updateSigningKeyPath, 'utf-8');
-    } catch {
-      return null;
-    }
-  })();
-
-  const computeManifestSignature = ({ deviceUid, version, artifactSha256 }) => {
-    if (!signingKeyPem) return { algo: null, sig: null, keyId: null };
-    const base = `${deviceUid}\n${version}\n${artifactSha256}`;
-    const signature = crypto.sign('RSA-SHA256', Buffer.from(base, 'utf8'), signingKeyPem).toString('base64');
-    const keyId = updateSigningKeyId || (typeof updateSigningKeyPath === 'string' ? path.basename(updateSigningKeyPath) : null);
-    return { algo: 'rsa-sha256', sig: signature, keyId };
-  };
 
   const createBootstrapToken = ({ kind }) => {
     const token = crypto.randomBytes(24).toString('base64url');
@@ -687,8 +669,7 @@ async function main() {
 	          }));
 	        }
 
-	        const artifactPath = `/api/device/artifacts/${encodeURIComponent(artifact.artifactId)}`;
-	        const { algo, sig, keyId } = computeManifestSignature({ deviceUid, version: artifact.version, artifactSha256: artifact.sha256 });
+          const artifactPath = `/api/device/artifacts/${encodeURIComponent(artifact.artifactId)}`;
 	        const manifest = {
 	          uid: deviceUid,
 	          version: artifact.version,
@@ -699,9 +680,6 @@ async function main() {
 	            filename: artifact.filename,
 	            sizeBytes: artifact.size_bytes
 	          },
-	          signatureAlgo: algo,
-	          signature: sig,
-	          keyId,
 	          issuedAt: new Date().toISOString()
 	        };
 

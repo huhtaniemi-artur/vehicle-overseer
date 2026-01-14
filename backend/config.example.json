@@ -8,8 +8,6 @@
   "deviceActionPort": 9000,
   "deviceLogPort": 9100,
   "devicePingIntervalS": 10,
-  "updateSigningKeyPath": "./keys/update_private.pem",
-  "updateSigningKeyId": "update_private.pem",
   "ipList": [
     "tcp://10.99.2.10:11883",
     "tcp://10.99.12.10:11883",

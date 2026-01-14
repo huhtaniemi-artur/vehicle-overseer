@@ -12,7 +12,7 @@ Backend endpoints used:
 - GET  /api/device/artifacts/<artifact-id>
 
 Security note:
-- This prototype supports optional manifest authentication via RSA-SHA256
+- The artifact bytes are decrypted, SHA256 is computed over the plaintext, and the result is compared to `manifest.artifact.sha256` (mismatch aborts the update).
 """
 
 from __future__ import annotations
