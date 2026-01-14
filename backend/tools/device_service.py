@@ -16,7 +16,6 @@ import ipaddress
 import json
 import re
 import os
-import re
 import select
 import signal
 import socket
@@ -50,6 +49,16 @@ def _env_float(name: str, default: float) -> float:
         return default
     try:
         return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
     except ValueError:
         return default
 
@@ -380,7 +389,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     device_uid = args.uid or _read_text(args.uid_path)
     if not device_uid:
-        print("Device UID is required (set --uid or --uid-path)")
+        print("Device UID is required")
         return 2
 
     if args.report_ip:
@@ -399,7 +408,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     label = args.label
     if not args.jsonpath:
-        print("JSON path is required (set --jsonpath or VO_JSONPATH)")
+        print("JSON path is required")
         return 2
     jsonpath = args.jsonpath
     mqtt_key = args.mqtt_key
@@ -437,7 +446,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd")
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--backend", default="http://localhost:3100", help="Backend base URL")
+    common.add_argument("--backend", default=os.environ.get("VO_BACKEND") or "http://localhost:3100", help="Backend base URL")
     common.add_argument("--uid", default=os.environ.get("VO_DEVICE_UID"), help="Device UID to report")
     common.add_argument(
         "--uid-path",
@@ -445,15 +454,23 @@ def main() -> None:
         help="Path to device UID file",
     )
     common.add_argument("--label", default=os.environ.get("VO_LABEL"), help="Display label for UI/logs")
-    common.add_argument("--action-port", type=int, default=9000, help="TCP port for action endpoint")
-    common.add_argument("--log-port", type=int, default=9100, help="TCP port for log endpoint")
-    common.add_argument("--bind-host", default="auto", help="Host/IP to bind TCP servers on (auto = reported ip-address)")
-    common.add_argument("--report-iface", default="tun0", help="Interface whose IPv4 address is reported as ip-address")
+    common.add_argument("--action-port", type=int, default=_env_int("VO_ACTION_PORT", 9000), help="TCP port for action endpoint")
+    common.add_argument("--log-port", type=int, default=_env_int("VO_LOG_PORT", 9100), help="TCP port for log endpoint")
+    common.add_argument(
+        "--bind-host",
+        default=os.environ.get("VO_BIND_HOST") or "auto",
+        help="Host/IP to bind TCP servers on (auto = reported ip-address)",
+    )
+    common.add_argument(
+        "--report-iface",
+        default=os.environ.get("VO_REPORT_IFACE") or "tun0",
+        help="Interface whose IPv4 address is reported as ip-address",
+    )
     common.add_argument("--report-ip", default=None, help="Override reported ip-address (skips iface wait)")
     common.add_argument(
         "--wait-timeout-s",
         type=float,
-        default=0,
+        default=_env_float("VO_WAIT_TIMEOUT_S", 0.0),
         help="Seconds to wait for report-iface to get an IPv4 address (0 = forever)",
     )
     common.add_argument(
