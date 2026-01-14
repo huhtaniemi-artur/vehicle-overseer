@@ -64,4 +64,4 @@ If no artifacts exist, `GET /api/device/manifest` returns `404`.
 - The updater swaps `app/` to `app.bak/`, installs the new app, runs `update.sh install`, then removes `app.bak/` on success.
 - `vo_updater.py remove` runs `update.sh remove`, disables/removes updater units, and deletes `app/` + `app.bak/` + `bootstrap/`.
 - Device can report per-device ports in `POST /api/ping` (`data.actionPort`, `data.logPort`); backend prefers these over global defaults when present.
-- Service version info is reported in `POST /api/ping` as `data.version` (e.g. `serviceVersion`, `buildId`, `updaterVersion`).
+- Service version info is reported in `POST /api/ping` as `data.version` (e.g. `serviceVersion`).

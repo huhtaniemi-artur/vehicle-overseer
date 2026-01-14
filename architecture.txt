@@ -59,7 +59,7 @@ Architecture overview (current implementation + clarified target behavior)
       - action endpoint: `<bind-host>:<action-port>` returns `{ok:true|false, error?}`
       - log endpoint: `<bind-host>:<log-port>` streams newline-delimited logs
     - Reports `actionPort` / `logPort` in the `data` section of `POST /api/ping` (so ports can be per-device).
-    - Reports version info in `data.version` (e.g. `serviceVersion`, `buildId`, `updaterVersion`).
+    - Reports version info in `data.version` (e.g. `serviceVersion`).
     - Note: on a single host, you can’t run two instances on the same `<bind-host>:<port>`; either bind to different IPs or use different ports.
   - Software updates (current prototype implementation):
     - Updater tool: `backend/tools/vo_updater.py` (intended to run as a systemd oneshot via timer).

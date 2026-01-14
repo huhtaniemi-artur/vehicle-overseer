@@ -144,8 +144,6 @@ class Device:
         self._lock = threading.Lock()
         self._service_version = self._read_service_version()
         self.service_name = service_name
-        self._build_id = os.environ.get("VO_BUILD_ID") or None
-        self._updater_version = os.environ.get("VO_UPDATER_VERSION") or None
 
     def _read_service_version(self) -> str | None:
         base = os.path.dirname(os.path.abspath(__file__))
@@ -187,8 +185,6 @@ class Device:
                     "logPort": self.log_port,
                     "version": {
                         "serviceVersion": self._service_version,
-                        "buildId": self._build_id,
-                        "updaterVersion": self._updater_version,
                     },
                 },
             }
