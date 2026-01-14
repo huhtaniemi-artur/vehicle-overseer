@@ -28,6 +28,23 @@ Example config.json
 }
 ```
 
+SEA binary build (official Node “Single Executable Application”)
+1) Build on the target OS/arch (Node 20+ required for build time):
+	- `npm install`
+	- `npm run build:sea`
+2) Deploy by copying `backend/dist/` to the target machine.
+	- Run: `./vehicle-overseer-backend` from inside that folder.
+	- Optional: create `config.json` next to the binary (otherwise it uses internal defaults).
+	- Keep `dist/schema.sql`, `dist/tools/`, and `dist/sql-wasm.wasm` alongside the executable (used at runtime).
+
+Runtime root (SEA + dev)
+- The backend resolves paths (config/data/schema/tools) relative to `process.cwd()`.
+- For systemd, set `WorkingDirectory=/path/to/dist` (recommended).
+
+Notes
+- SEA produces a native executable by copying your current `node` binary and injecting an app blob.
+- The backend will create `./data/` next to the executable on first run.
+
 Key files
 - `config.json`: Optional runtime config (if missing, backend uses internal defaults).
 - `schema.sql`: Tables for update artifacts/versions, per-device update targets, device keys, and bootstrap tokens.

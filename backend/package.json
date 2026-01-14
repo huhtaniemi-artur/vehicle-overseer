@@ -5,10 +5,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "build:sea": "node tools/build_sea.mjs",
+    "clean:dist": "rm -rf dist"
   },
   "dependencies": {
     "sql.js": "^1.9.0",
     "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.2",
+    "postject": "^1.0.0-alpha.6"
   }
 }

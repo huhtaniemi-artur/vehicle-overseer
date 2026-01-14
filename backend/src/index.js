@@ -49,7 +49,15 @@ async function main() {
   fs.mkdirSync(dataDir, { recursive: true });
 
   // Initialize sql.js database (portable SQLite)
-  const SQL = await initSqlJs();
+  const SQL = await initSqlJs({
+    locateFile: (file) => {
+      // sql.js needs sql-wasm.wasm. In dev it lives in node_modules; in packaged builds it must be
+      // shipped next to the executable (same dir as process.execPath).
+      const packaged = fs.existsSync(path.join(rootDir, file));
+      if (packaged) return path.join(rootDir, file);
+      return path.join(rootDir, 'node_modules', 'sql.js', 'dist', file);
+    }
+  });
   const dbPath = path.resolve(rootDir, config.dbPath || './data/vehicle_overseer.sqlite');
   let db;
   if (fs.existsSync(dbPath)) {
