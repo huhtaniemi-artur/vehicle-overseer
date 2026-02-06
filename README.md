@@ -23,4 +23,12 @@ Quick start
 
 Notes
 - Per-vehicle commands should be stored outside the repo.
-- The current implementation uses a simulator for device action/log endpoints; replace with real device integration per the architecture docs.
+
+Artifacts (make vs import)
+- `make` creates an artifact tarball (`.tar.gz`) from a directory (or accepts an existing tarball). This does not touch the backend DB.
+- `import` publishes that artifact into the backend runtime state (copies bytes into `backend/data/artifacts/<sha256>` and updates SQLite tables).
+
+Local (developer machine)
+- Make (path implies `make`): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
+- Import into local backend workspace: `node updater/artifacts.js import ./artifact_v0.1.0.tar.gz --version v0.1.0`
+- Combined (make + import into local backend workspace): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz --import`

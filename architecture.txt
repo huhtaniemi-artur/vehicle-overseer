@@ -37,7 +37,8 @@ Architecture overview (current implementation + clarified target behavior)
       - `GET /api/device/key?token=...` provisions an optional per-device transfer key (used by the updater for encrypted downloads).
     - Updates (artifact distribution):
       - Artifacts are stored by hash under `backend/data/artifacts/<sha256>` (artifact id = sha256).
-      - Versions are tags in SQLite (`versions.version`) mapped to an artifact id (`versions.artifact_id`) imported via `node backend/tools/import_version.js`.
+      - Versions are tags in SQLite (`versions.version`) mapped to an artifact id (`versions.artifact_id`).
+        - Local tooling: `node updater/artifacts.js import ./artifact.tar.gz --version vX.Y.Z`
   - WebSocket:
     - Shared UI stream `/ws` sends `init` (full snapshot on connect) and `entry` deltas (per UID update).
     - Per-device log stream `/logs?uid=...` streams logs proxied from the device/service (in dev, the simulator acts as the device log source).

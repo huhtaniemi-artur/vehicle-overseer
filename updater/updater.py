@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Pull-based updater for the target device/service.
+"""Pull-based updater.
 
 Intended usage:
 - Runs as a systemd timer (oneshot) as root.
@@ -160,6 +159,7 @@ def _run_update_script(app_dir: str, env: dict[str, str]) -> None:
 
 
 def _replace_self(app_dir: str) -> None:
+    # Allow artifacts to ship updater updates.
     candidate = os.path.join(app_dir, "updater.py")
     if not os.path.isfile(candidate):
         return

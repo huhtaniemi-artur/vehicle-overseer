@@ -37,6 +37,24 @@ SEA binary build (official Node “Single Executable Application”)
 	- Optional: create `config.json` next to the binary (otherwise it uses internal defaults).
 	- Keep `dist/schema.sql`, `dist/tools/`, and `dist/sql-wasm.wasm` alongside the executable (used at runtime).
 
+Artifacts
+---------
+Artifact management is split into two operations:
+- `make`: create a `.tar.gz` artifact from a directory (or accept an existing `.tar.gz`). This does not touch SQLite.
+- `import`: copy artifact bytes into the backend’s runtime `data/` directory and update SQLite tables (`artifacts`, `versions`).
+
+Local (developer machine): make artifacts
+- Shorthand (path implies `make`): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
+- Explicit: `node updater/artifacts.js make ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
+- Combined (make + import into your local backend workspace): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz --import`
+
+Local (developer machine): import into your local backend workspace
+- From repo root: `node updater/artifacts.js import ./artifact_v0.1.0.tar.gz --version v0.1.0`
+- Shortcut (from `backend/`): `npm run artifacts -- import ../artifact_v0.1.0.tar.gz --version v0.1.0`
+
+Notes:
+- If the server is already running, the backend reloads the SQLite DB on subsequent HTTP requests when the DB file mtime changes.
+
 Runtime root (SEA + dev)
 - The backend resolves paths (config/data/schema/tools) relative to `process.cwd()`.
 - For systemd, set `WorkingDirectory=/path/to/dist` (recommended).

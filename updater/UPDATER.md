@@ -33,7 +33,8 @@ The updater expects a `.tar.gz` with files at the archive root, e.g.:
 - `VERSION` (string matching manifest version)
 - Optional: `updater.py` (allows the updater to self-update)
 - Optional: `updater/systemd/updater.service`, `updater/systemd/updater.timer` (installed as `vehicle-overseer-updater.*` by `update.sh`)
-- `device-service/setup.sh` + `device-service/systemd/vehicle-overseer.service` (device service is installed as `vehicle-overseer.service`)
+- `updater/updater-setup.sh` (installs/enables updater systemd units)
+- `device-service/service-setup.sh` + `device-service/systemd/vehicle-overseer.service` (device service is installed as `vehicle-overseer.service`)
 
 ## How artifacts are provided (current backend)
 
@@ -43,13 +44,26 @@ Artifacts are stored by content hash (artifact id) under:
 
 Versions are tags stored in SQLite (`versions.version`) mapped to a single package artifact (`versions.artifact_id`).
 
-Import a new version on the backend with:
+Artifact management is split into two independent operations:
 
-- `node backend/tools/import_version.js --version v0.1.0 --file ./path/to/vehicle-overseer-device_v0.1.0.tar.gz`
-- or build a bundle from a directory:
-  - `node backend/tools/import_version.js --version v0.1.0 --dir ./release-dir`
+- `make`: create a `.tar.gz` artifact from a directory (or accept an existing tarball). This does not touch SQLite.
+- `import`: publish that artifact into the backend runtime state (copy bytes into `backend/data/artifacts/<sha256>` and update SQLite `artifacts` + `versions`).
+
+Local (developer machine): make artifacts
+
+- Shorthand (implies `make`):
+  - `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
+- Explicit:
+  - `node updater/artifacts.js make ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
+
+Local (developer machine): import into your local backend workspace
+
+- `node updater/artifacts.js import ./artifact_v0.1.0.tar.gz --version v0.1.0`
+
+
 Notes:
-- When `systemd/` units or `update.sh` are missing in the release dir, `make` copies them from `updater/`.
+- When updater `systemd/` units are missing in the release dir, `make` copies them from `updater/systemd/`.
+- When `update.sh` is missing, `make` injects a default script (built-in to `updater/artifacts.js`).
 - If no artifacts exist, `GET /api/device/manifest` returns `404`.
 
 If no artifacts exist, `GET /api/device/manifest` returns `404`.
