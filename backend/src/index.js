@@ -316,19 +316,15 @@ async function main() {
     );
   };
 
-  const provisioningRoots = [
-    rootDir,
-    path.resolve(rootDir, '..'),
-    devRootDir,
-    path.resolve(devRootDir, '..')
-  ];
   const resolveProvisioningFile = (relativePath) => {
+    if (typeof relativePath !== 'string' || relativePath.includes('..')) return null;
+
+    // Strict current layout only:
+    // - Production/SEA: files live under <WorkingDirectory>/updater/...
+    // - Dev (running from backend/): files live under <repoRoot>/updater/...
     const candidates = [
-      // Current layout: repoRoot/updater/...
-      ...provisioningRoots.map((r) => path.join(r, 'updater', relativePath)),
-      // Legacy layouts (keep for compatibility): backend/service, backend/tools
-      ...provisioningRoots.map((r) => path.join(r, 'service', relativePath)),
-      ...provisioningRoots.map((r) => path.join(r, 'tools', relativePath))
+      path.join(rootDir, 'updater', relativePath),
+      path.join(devRootDir, '..', 'updater', relativePath)
     ];
     for (const candidate of candidates) {
       try {
@@ -577,7 +573,6 @@ async function main() {
       try {
         const name = pathname.split('/').pop();
         const allowed = new Set([
-          'device.service',
           'updater.service',
           'updater.timer',
           'updater.py',

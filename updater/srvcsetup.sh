@@ -24,6 +24,8 @@ INSTALL_ROOT=__INSTALL_ROOT__
 ENV_DIR=__ENV_DIR__
 SYSTEMD_DIR=/etc/systemd/system
 UPDATER_PATH="$INSTALL_ROOT/updater.py"
+UPDATER_SERVICE_NAME=vehicle-overseer-updater.service
+UPDATER_TIMER_NAME=vehicle-overseer-updater.timer
 
 if ! command -v systemctl >/dev/null 2>&1; then
   log "systemctl not found (systemd required)"
@@ -93,6 +95,14 @@ log "install bootstrap updater"
 FETCH "$BACKEND_BASE/api/srvcsetup/files/updater.py" >"$UPDATER_PATH"
 chmod +x "$UPDATER_PATH"
 
+log "install updater systemd units"
+FETCH "$BACKEND_BASE/api/srvcsetup/files/updater.service" >"$SYSTEMD_DIR/$UPDATER_SERVICE_NAME"
+FETCH "$BACKEND_BASE/api/srvcsetup/files/updater.timer" >"$SYSTEMD_DIR/$UPDATER_TIMER_NAME"
+
+log "enable updater timer"
+systemctl daemon-reload
+systemctl enable --now "$UPDATER_TIMER_NAME"
+
 if [ -t 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
   log "open editor to finalize config (device.env, updater.env)"
   if command -v nano >/dev/null 2>&1; then
@@ -100,9 +110,7 @@ if [ -t 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
   elif [ -n "${EDITOR:-}" ]; then
     "$EDITOR" "$ENV_DIR/device.env" "$ENV_DIR/updater.env" </dev/tty >/dev/tty
   else
-    log "no editor available; edit $ENV_DIR/device.env then run:"
-    log "  systemctl daemon-reload && systemctl enable --now vehicle-overseer-device.service vehicle-overseer-updater.timer"
-    exit 0
+    log "no editor available; edit $ENV_DIR/device.env and $ENV_DIR/updater.env if needed"
   fi
 else
   log "no interactive TTY; skip editor (edit $ENV_DIR/device.env manually if needed)"

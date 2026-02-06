@@ -22,6 +22,6 @@ Install inside the container using your backend’s initial setup endpoint (inte
     - `python3 -c "import urllib.request; print(urllib.request.urlopen('http://host.docker.internal:3100/api/srvcsetup?label=DEVICE_LABEL&token=PASTE_TOKEN').read().decode('utf-8'))" | bash`
 
 Useful checks:
-- `systemctl status vehicle-overseer-device.service`
+- `systemctl status vehicle-overseer.service`
 - `systemctl status vehicle-overseer-updater.timer`
-- `journalctl -u vehicle-overseer-device.service -f`
+- `journalctl -u vehicle-overseer.service -f`

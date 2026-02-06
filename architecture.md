@@ -3,7 +3,7 @@ flowchart LR
   subgraph Targets
     Service["Target service<br/>POST pings (~3s)<br/>{uid, label, ip-address, state, data}"]
     Device["Target device"]
-    Stub["Current stub service (Python)<br/>device-service/device_service.py<br/>waits for tun0 IPv4 before POST<br/>TCP action/log endpoints"]
+    Stub["Current stub service (Python)<br/>device-service/service.py<br/>waits for tun0 IPv4 before POST<br/>TCP action/log endpoints"]
     Updater["Target updater (Python)<br/>updater/updater.py<br/>pulls manifest + artifact<br/>uses device UID"]
   end
 

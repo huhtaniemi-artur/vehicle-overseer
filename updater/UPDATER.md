@@ -4,13 +4,13 @@ This repo contains a pull-based updater design intended for Linux devices runnin
 
 ## Device-side pieces
 
-- Service implementation: `device-service/device_service.py`
+- Service implementation: `device-service/service.py`
 - Updater: `updater/updater.py`
 - Systemd templates: `updater/systemd/`
 
 The recommended on-device layout is:
 
-- `/opt/vehicle-overseer/app/` (active app files, including `device_service.py` and `update.sh`)
+- `/opt/vehicle-overseer/app/` (active app files, including `service.py` and `update.sh`)
 - `/opt/vehicle-overseer/app.bak/` (previous app during update, removed after success)
 - `/opt/vehicle-overseer/updater.py` (updater lives outside app)
 - `/etc/vehicle-overseer/device.env` (device + backend settings)
@@ -29,10 +29,11 @@ The recommended on-device layout is:
 The updater expects a `.tar.gz` with files at the archive root, e.g.:
 
 - `update.sh` (required; invoked as `update.sh install` and `update.sh remove`)
-- `device_service.py`
+- `service.py`
 - `VERSION` (string matching manifest version)
 - Optional: `updater.py` (allows the updater to self-update)
-- Optional: `systemd/device.service`, `systemd/updater.service`, `systemd/updater.timer` (installed as `vehicle-overseer-*.service|*.timer` by `update.sh`)
+- Optional: `updater/systemd/updater.service`, `updater/systemd/updater.timer` (installed as `vehicle-overseer-updater.*` by `update.sh`)
+- `device-service/setup.sh` + `device-service/systemd/vehicle-overseer.service` (device service is installed as `vehicle-overseer.service`)
 
 ## How artifacts are provided (current backend)
 

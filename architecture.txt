@@ -53,7 +53,7 @@ Architecture overview (current implementation + clarified target behavior)
   - Actions are initiated by backend by opening a new connection to the device; device does not need a persistent connection to the backend.
   - Device/service returns only final success or error for the action; backend stages come from backend execution steps and must not be time-invented (emit stages when each real step starts/finishes).
   - Service implementation (current stub):
-    - `device-service/device_service.py` runs as a single-device process (intended for systemd).
+    - `device-service/service.py` runs as a single-device process (intended for systemd).
     - Waits for an IPv4 on a configured interface (default `tun0`) and reports that address as `ip-address` in `POST /api/ping`.
     - Exposes TCP endpoints for backend→device connections:
       - action endpoint: `<bind-host>:<action-port>` returns `{ok:true|false, error?}`
@@ -68,7 +68,7 @@ Architecture overview (current implementation + clarified target behavior)
       - Updater downloads artifact from `artifact.url`, verifies SHA256, unpacks it into `/opt/vehicle-overseer/app/`,
         shifts the previous app to `/opt/vehicle-overseer/app.bak/`, then runs `update.sh install`.
     - Systemd templates:
-      - Device service: `updater/systemd/device.service` (installed as `vehicle-overseer-device.service`)
+      - Device service: `device-service/systemd/vehicle-overseer.service` (installed as `vehicle-overseer.service`)
       - Updater: `updater/systemd/updater.service` + `updater/systemd/updater.timer` (installed as `vehicle-overseer-updater.service|.timer`)
     - Device ID: manifest pull uses UID as the stable device identifier; backend resolves per-device/per-group targeting from DB.
     - Note: push-triggered updates via the existing backend→device action connection are not implemented yet (planned: “force update now” commands).
