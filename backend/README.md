@@ -54,3 +54,6 @@ Key files
 Endpoints
 - HTTP: `GET /api/config`, `GET /api/entries`, `POST /api/ping`, `POST /api/action/select`, `GET /api/health`
 - WS: `ws://host:port/ws` (UI updates), `ws://host:port/logs?uid=UID` (per-device log proxy)
+
+UI
+- `GET /` serves `index.html` when available (so the backend can run standalone without Python).

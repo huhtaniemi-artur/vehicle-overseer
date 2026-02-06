@@ -17,7 +17,9 @@ Quick start
 3) Initialize DB: `mkdir -p backend/data` then `sqlite3 backend/data/vehicle_overseer.sqlite < backend/schema.sql`.
 4) Install backend deps: `cd backend && npm install`.
 5) Run backend: `npm start` (HTTP + WS on the configured port; provides `/api/ping` and WebSocket `/ws` plus per-vehicle `/logs`).
-6) Serve frontend: `cd frontend && python -m http.server 8088` (or any static server). In the UI set the backend base (e.g., `http://localhost:3100`) via the input, or open with `?backend=http://localhost:3100`.
+6) UI:
+   - Easiest: open `http://localhost:3100/` (backend serves `index.html`).
+   - Or serve frontend separately: `cd frontend && python -m http.server 8088` (or any static server). In the UI set the backend base (e.g., `http://localhost:3100`) via the input, or open with `?backend=http://localhost:3100`.
 
 Notes
 - Per-vehicle commands should be stored outside the repo.

@@ -464,6 +464,38 @@ async function main() {
       return res.end();
     }
 
+    // Minimal UI hosting (so the backend binary can serve the page without Python).
+    if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
+      try {
+        const candidates = [
+          path.join(rootDir, 'index.html'),
+          path.join(rootDir, 'frontend', 'index.html'),
+          path.join(rootDir, '..', 'frontend', 'index.html'),
+          path.join(devRootDir, '..', 'frontend', 'index.html')
+        ];
+        const indexPath = candidates.find((p) => {
+          try {
+            return fs.existsSync(p) && fs.statSync(p).isFile();
+          } catch {
+            return false;
+          }
+        });
+        if (!indexPath) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          return res.end('index.html not found\n');
+        }
+        const html = fs.readFileSync(indexPath);
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache'
+        });
+        return res.end(html);
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end(`error: ${err.message}\n`);
+      }
+    }
+
     if (pathname === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true }));
