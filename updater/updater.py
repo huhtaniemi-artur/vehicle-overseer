@@ -5,7 +5,7 @@ Pull-based updater for the target device/service.
 Intended usage:
 - Runs as a systemd timer (oneshot) as root.
 - Pulls a per-device manifest from the backend and applies updates atomically.
-- Executes update.sh from the artifact to install/remove system files.
+- Executes update.sh from the artifact.
 
 Backend endpoints used:
 - GET  /api/device/manifest?uid=UID
@@ -142,28 +142,21 @@ def _systemctl(args: list[str]) -> subprocess.CompletedProcess[str]:
 APP_DIRNAME = "app"
 APP_BACKUP_DIRNAME = "app.bak"
 UPDATE_SCRIPT_NAME = "update.sh"
-SYSTEMD_DIR = "/etc/systemd/system"
-UPDATER_UNITS = (
-    "vehicle-overseer-updater.service",
-    "vehicle-overseer-updater.timer",
-)
-
-
-def _run_update_script(app_dir: str, action: str, env: dict[str, str]) -> None:
+def _run_update_script(app_dir: str, env: dict[str, str]) -> None:
     script_path = os.path.join(app_dir, UPDATE_SCRIPT_NAME)
     if not os.path.isfile(script_path):
         raise ValueError(f"missing {UPDATE_SCRIPT_NAME} in artifact")
     if os.access(script_path, os.X_OK):
-        cmd = [script_path, action]
+        cmd = [script_path]
     else:
         shell = shutil.which("bash") or shutil.which("sh")
         if not shell:
             raise RuntimeError("no shell found to run update.sh (install bash or sh)")
-        cmd = [shell, script_path, action]
-    log(f"run {UPDATE_SCRIPT_NAME} {action}")
+        cmd = [shell, script_path]
+    log(f"run {UPDATE_SCRIPT_NAME}")
     proc = subprocess.run(cmd, cwd=app_dir, env=env)
     if proc.returncode != 0:
-        raise RuntimeError(f"{UPDATE_SCRIPT_NAME} {action} failed (exit {proc.returncode})")
+        raise RuntimeError(f"{UPDATE_SCRIPT_NAME} failed (exit {proc.returncode})")
 
 
 def _replace_self(app_dir: str) -> None:
@@ -271,7 +264,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             env["VO_APP_DIR"] = app_dir
             env["VO_APP_BACKUP"] = backup_dir
             env["VO_BACKEND"] = backend
-            _run_update_script(app_dir, "install", env)
+            _run_update_script(app_dir, env)
 
             if os.path.isdir(backup_dir):
                 shutil.rmtree(backup_dir, ignore_errors=True)
@@ -297,53 +290,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_remove(args: argparse.Namespace) -> int:
-    install_root = args.install_root
-    app_dir = os.path.join(install_root, APP_DIRNAME)
-    backup_dir = os.path.join(install_root, APP_BACKUP_DIRNAME)
-    log(f"remove installRoot={install_root}")
-
-    env = os.environ.copy()
-    env["VO_INSTALL_ROOT"] = install_root
-    env["VO_APP_DIR"] = app_dir
-    env["VO_APP_BACKUP"] = backup_dir
-    if args.backend:
-        env["VO_BACKEND"] = args.backend
-
-    if os.path.isfile(os.path.join(app_dir, UPDATE_SCRIPT_NAME)):
-        _run_update_script(app_dir, "remove", env)
-    else:
-        log(f"warn: {UPDATE_SCRIPT_NAME} not found; skipping remove hook")
-
-    for unit in UPDATER_UNITS:
-        try:
-            _systemctl(["disable", "--now", unit])
-        except FileNotFoundError:
-            log("warn: systemctl not found (skip disabling updater)")
-            break
-        except subprocess.CalledProcessError as exc:
-            log(f"warn: failed to disable {unit} (systemd not running?)")
-            log(f"manual: systemctl disable --now {unit}")
-            log(f"details: {exc.stderr.strip() or exc.stdout.strip() or exc}")
-
-    for unit in UPDATER_UNITS:
-        unit_path = os.path.join(SYSTEMD_DIR, unit)
-        if os.path.exists(unit_path):
-            os.remove(unit_path)
-
-    shutil.rmtree(app_dir, ignore_errors=True)
-    shutil.rmtree(backup_dir, ignore_errors=True)
-    state_path = os.path.join(install_root, "state.json")
-    if os.path.exists(state_path):
-        os.remove(state_path)
-
-    log("remove complete")
-    return 0
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("cmd", nargs="?", choices=["remove"], help="Remove app + updater")
     parser.add_argument("--backend", default=_env("VO_BACKEND", "http://localhost:3100"), help="Backend base URL")
     parser.add_argument(
         "--install-root",
@@ -368,8 +316,6 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    if args.cmd == "remove":
-        raise SystemExit(cmd_remove(args))
     raise SystemExit(cmd_apply(args))
 
 

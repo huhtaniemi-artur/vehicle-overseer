@@ -3,12 +3,6 @@ set -eu
 
 log() { printf '[update.sh] %s\n' "$*" >&2; }
 
-ACTION="${1:-}"
-if [ -z "$ACTION" ]; then
-  log "usage: update.sh install|remove"
-  exit 2
-fi
-
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_ROOT="${VO_INSTALL_ROOT:-$(cd "$APP_DIR/.." && pwd)}"
 SYSTEMD_DIR=/etc/systemd/system
@@ -75,12 +69,8 @@ run_updater_setup() {
   fi
 }
 
-if [ "$ACTION" = "install" ]; then
-  install_updater_units
-  run_updater_setup
-  run_device_setup
-  exit 0
-fi
 
-log "unknown action: $ACTION"
-exit 2
+install_updater_units
+run_updater_setup
+run_device_setup
+exit 0

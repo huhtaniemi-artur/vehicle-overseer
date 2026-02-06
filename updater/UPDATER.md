@@ -28,7 +28,7 @@ The recommended on-device layout is:
 
 The updater expects a `.tar.gz` with files at the archive root, e.g.:
 
-- `update.sh` (required; invoked as `update.sh install` and `update.sh remove`)
+- `update.sh` (required)
 - `service.py`
 - `VERSION` (string matching manifest version)
 - Optional: `updater.py` (allows the updater to self-update)
@@ -65,7 +65,6 @@ If no artifacts exist, `GET /api/device/manifest` returns `404`.
     - `curl -sS -X POST http://127.0.0.1:3100/api/bootstrap-token -H 'Content-Type: application/json' -d '{"kind":"dev"}'`
 - The updater requires `VO_ARTIFACT_KEY_PATH` and requests encrypted downloads by adding `?uid=DEVICE_UID` to the artifact URL; backend responds with `X-VO-Enc: aes-256-ctr` + `X-VO-Iv: ...`.
 - Device UID can be provided via `VO_DEVICE_UID` or a file at `/etc/vehicle-overseer/device.uid` (override with `VO_DEVICE_UID_PATH`).
-- The updater swaps `app/` to `app.bak/`, installs the new app, runs `update.sh install`, then removes `app.bak/` on success.
-- `updater.py remove` runs `update.sh remove`, disables/removes updater units, and deletes `app/` + `app.bak/`.
+- The updater swaps `app/` to `app.bak/`, installs the new app, runs `update.sh`, then removes `app.bak/` on success.
 - Device can report per-device ports in `POST /api/ping` (`data.actionPort`, `data.logPort`); backend prefers these over global defaults when present.
 - Service version info is reported in `POST /api/ping` as `data.version` (e.g. `serviceVersion`).

@@ -66,7 +66,7 @@ Architecture overview (current implementation + clarified target behavior)
     - Update loop:
       - Timer triggers updater → updater calls `GET /api/device/manifest?uid=...`
       - Updater downloads artifact from `artifact.url`, verifies SHA256, unpacks it into `/opt/vehicle-overseer/app/`,
-        shifts the previous app to `/opt/vehicle-overseer/app.bak/`, then runs `update.sh install`.
+        shifts the previous app to `/opt/vehicle-overseer/app.bak/`, then runs `update.sh`.
     - Systemd templates:
       - Device service: `device-service/systemd/vehicle-overseer.service` (installed as `vehicle-overseer.service`)
       - Updater: `updater/systemd/updater.service` + `updater/systemd/updater.timer` (installed as `vehicle-overseer-updater.service|.timer`)
