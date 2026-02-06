@@ -6,14 +6,17 @@ import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const backendRoot = path.resolve(__dirname, '..');
+const backendRoot = path.resolve(__dirname);
+const repoRoot = path.resolve(backendRoot, '..');
 const distDir = path.join(backendRoot, 'dist');
 
 const binName = 'vehicle-overseer-backend';
 const platform = process.platform;
+const arch = process.arch;
 const exeSuffix = platform === 'win32' ? '.exe' : '';
 
 const SEA_FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
+const shouldTar = process.argv.includes('--tar');
 
 const nodeMajor = Number(String(process.versions.node || '').split('.')[0] || '0');
 if (nodeMajor < 20) {
@@ -102,16 +105,27 @@ run(tool('postject'), postjectArgs, { cwd: backendRoot });
 // 4) Copy runtime assets next to the binary
 copyFile(path.join(backendRoot, 'schema.sql'), path.join(distDir, 'schema.sql'));
 
-// The backend serves srvcsetup.sh and unit files from tools/ at runtime.
-copyFile(path.join(backendRoot, 'tools', 'srvcsetup.sh'), path.join(distDir, 'tools', 'srvcsetup.sh'));
-copyFile(path.join(backendRoot, 'tools', 'vo_updater.py'), path.join(distDir, 'tools', 'vo_updater.py'));
-copyDir(path.join(backendRoot, 'tools', 'systemd'), path.join(distDir, 'tools', 'systemd'));
+// Service/provisioning assets: backend serves these at runtime.
+copyFile(path.join(repoRoot, 'updater', 'srvcsetup.sh'), path.join(distDir, 'updater', 'srvcsetup.sh'));
+copyFile(
+  path.join(repoRoot, 'updater', 'updater.py'),
+  path.join(distDir, 'updater', 'updater.py')
+);
+copyDir(path.join(repoRoot, 'updater', 'systemd'), path.join(distDir, 'updater', 'systemd'));
 
 // sql.js WASM: required at runtime next to the executable.
 copyFile(
   path.join(backendRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
   path.join(distDir, 'sql-wasm.wasm')
 );
+
+// Optional: package the entire dist/ directory for easy server transport.
+if (shouldTar) {
+  const tarName = `${binName}-${platform}-${arch}.tar.gz`;
+  const tarPath = path.join(distDir, tarName);
+  run('tar', ['-C', distDir, '-czf', tarPath, '.']);
+  console.log(`Packaged dist tarball: ${tarPath}`);
+}
 
 console.log(`\nBuilt SEA executable: ${outExe}`);
 console.log(`Dist dir: ${distDir}`);

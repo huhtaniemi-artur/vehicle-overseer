@@ -1,0 +1,17 @@
+[Unit]
+Description=vehicle overseer client
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vehicle-overseer/app
+EnvironmentFile=/etc/vehicle-overseer/device.env
+ExecStart=/usr/bin/python3 /opt/vehicle-overseer/app/device_service.py run \
+ --backend ${VO_BACKEND} --uid-path ${VO_DEVICE_UID_PATH} --label ${VO_LABEL} --jsonpath ${VO_JSONPATH} --report-iface ${VO_REPORT_IFACE} --wait-timeout-s ${VO_WAIT_TIMEOUT_S} --action-port ${VO_ACTION_PORT} --log-port ${VO_LOG_PORT} --bind-host ${VO_BIND_HOST}
+Restart=always
+RestartSec=3
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

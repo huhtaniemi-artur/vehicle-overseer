@@ -23,7 +23,7 @@ PING_INTERVAL_S=__PING_INTERVAL_S__
 INSTALL_ROOT=__INSTALL_ROOT__
 ENV_DIR=__ENV_DIR__
 SYSTEMD_DIR=/etc/systemd/system
-BOOTSTRAP_DIR="$INSTALL_ROOT/bootstrap"
+UPDATER_PATH="$INSTALL_ROOT/updater.py"
 
 if ! command -v systemctl >/dev/null 2>&1; then
   log "systemctl not found (systemd required)"
@@ -41,7 +41,7 @@ fi
 log "backend=$BACKEND_BASE label=$LABEL reportIface=$REPORT_IFACE actionPort=$ACTION_PORT logPort=$LOG_PORT pingInterval=${PING_INTERVAL_S}s"
 log "installRoot=$INSTALL_ROOT envDir=$ENV_DIR"
 
-mkdir -p "$INSTALL_ROOT" "$ENV_DIR" "$BOOTSTRAP_DIR"
+mkdir -p "$INSTALL_ROOT" "$ENV_DIR"
 
 FETCH() {
   url="$1"
@@ -90,8 +90,8 @@ else
 fi
 
 log "install bootstrap updater"
-FETCH "$BACKEND_BASE/api/srvcsetup/files/vo_updater.py" >"$BOOTSTRAP_DIR/vo_updater.py"
-chmod +x "$BOOTSTRAP_DIR/vo_updater.py"
+FETCH "$BACKEND_BASE/api/srvcsetup/files/updater.py" >"$UPDATER_PATH"
+chmod +x "$UPDATER_PATH"
 
 if [ -t 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
   log "open editor to finalize config (device.env, updater.env)"
@@ -101,7 +101,7 @@ if [ -t 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
     "$EDITOR" "$ENV_DIR/device.env" "$ENV_DIR/updater.env" </dev/tty >/dev/tty
   else
     log "no editor available; edit $ENV_DIR/device.env then run:"
-    log "  systemctl daemon-reload && systemctl enable --now vehicle-overseer-device.service vo-updater.timer"
+    log "  systemctl daemon-reload && systemctl enable --now vehicle-overseer-device.service vehicle-overseer-updater.timer"
     exit 0
   fi
 else
@@ -109,7 +109,7 @@ else
 fi
 
 log "run updater (initial install)"
-/usr/bin/python3 "$BOOTSTRAP_DIR/vo_updater.py" \
+/usr/bin/python3 "$UPDATER_PATH" \
   --backend "$BACKEND_BASE" \
   --force \
   --artifact-key-path "$ENV_DIR/artifact.key" \

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "build:sea": "node tools/build_sea.mjs",
+    "build:sea": "node build_sea.mjs",
     "clean:dist": "rm -rf dist"
   },
   "dependencies": {

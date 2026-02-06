@@ -23,5 +23,5 @@ Install inside the container using your backend’s initial setup endpoint (inte
 
 Useful checks:
 - `systemctl status vehicle-overseer-device.service`
-- `systemctl status vo-updater.timer`
+- `systemctl status vehicle-overseer-updater.timer`
 - `journalctl -u vehicle-overseer-device.service -f`

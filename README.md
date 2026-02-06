@@ -8,7 +8,7 @@ Components
 - Frontend (`frontend/`): Static app that connects to backend `/ws`, renders entries, lets you pick IPs (with confirm), and shows log overlay streams.
 - Database (`backend/schema.sql`): SQLite schema for update artifacts/versions, per-device update targets, device keys, and bootstrap tokens.
 - Docs: concept doc in repo root, `architecture.txt`, `architecture.md`.
- - Simulator (`backend/tools/simulator.py`): Python device/service simulator for updates + action endpoint + log stream.
+- Simulator (`device-service/simulator.py`): Python device/service simulator for updates + action endpoint + log stream.
 
 Quick start
 1) Requirements: Node.js 18+; SQLite CLI (`sqlite3`).

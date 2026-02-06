@@ -5,7 +5,7 @@ Description=Vehicle Overseer updater timer
 OnBootSec=2min
 OnUnitActiveSec=60min
 RandomizedDelaySec=5min
-Unit=vo-updater.service
+Unit=vehicle-overseer-updater.service
 
 [Install]
 WantedBy=timers.target

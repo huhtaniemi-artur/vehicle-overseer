@@ -9,12 +9,11 @@ import { spawnSync } from 'child_process';
 import initSqlJs from 'sql.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const backendRoot = path.resolve(__dirname, '..');
-const SYSTEMD_UNITS = [
-  'vehicle-overseer-device.service',
-  'vo-updater.service',
-  'vo-updater.timer',
-];
+const repoRoot = path.resolve(__dirname, '..');
+const backendRoot = path.join(repoRoot, 'backend');
+const updaterRoot = path.resolve(__dirname);
+
+const SYSTEMD_UNITS = ['device.service', 'updater.service', 'updater.timer'];
 const UPDATE_SCRIPT = 'update.sh';
 
 function parseArgs(argv) {
@@ -63,9 +62,8 @@ function buildTarFromDir(dirPath, outTarPath) {
 }
 
 function ensureSystemdUnits(stagingDir) {
-  const srcDir = path.join(backendRoot, 'tools', 'systemd');
-  if (!fs.existsSync(srcDir)) return { added: false };
-  let added = false;
+  const srcDir = path.join(updaterRoot, 'systemd');
+  if (!fs.existsSync(srcDir)) return;
   const systemdDir = path.join(stagingDir, 'systemd');
   for (const name of SYSTEMD_UNITS) {
     const rootCandidate = path.join(stagingDir, name);
@@ -73,19 +71,16 @@ function ensureSystemdUnits(stagingDir) {
     if (fs.existsSync(rootCandidate) || fs.existsSync(systemdCandidate)) continue;
     fs.mkdirSync(systemdDir, { recursive: true });
     fs.copyFileSync(path.join(srcDir, name), systemdCandidate);
-    added = true;
   }
-  return { added };
 }
 
 function ensureUpdateScript(stagingDir) {
   const scriptPath = path.join(stagingDir, UPDATE_SCRIPT);
-  if (fs.existsSync(scriptPath)) return { added: false };
-  const srcPath = path.join(backendRoot, 'tools', UPDATE_SCRIPT);
-  if (!fs.existsSync(srcPath)) return { added: false };
+  if (fs.existsSync(scriptPath)) return;
+  const srcPath = path.join(updaterRoot, UPDATE_SCRIPT);
+  if (!fs.existsSync(srcPath)) return;
   fs.copyFileSync(srcPath, scriptPath);
   fs.chmodSync(scriptPath, 0o755);
-  return { added: true };
 }
 
 async function main() {

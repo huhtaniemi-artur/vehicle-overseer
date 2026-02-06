@@ -31,6 +31,7 @@ import time
 import urllib.parse
 import urllib.request
 
+
 def log(msg: str) -> None:
     print(f"[updater] {msg}")
 
@@ -140,12 +141,11 @@ def _systemctl(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 APP_DIRNAME = "app"
 APP_BACKUP_DIRNAME = "app.bak"
-BOOTSTRAP_DIRNAME = "bootstrap"
 UPDATE_SCRIPT_NAME = "update.sh"
 SYSTEMD_DIR = "/etc/systemd/system"
 UPDATER_UNITS = (
-    "vo-updater.service",
-    "vo-updater.timer",
+    "vehicle-overseer-updater.service",
+    "vehicle-overseer-updater.timer",
 )
 
 
@@ -167,7 +167,7 @@ def _run_update_script(app_dir: str, action: str, env: dict[str, str]) -> None:
 
 
 def _replace_self(app_dir: str) -> None:
-    candidate = os.path.join(app_dir, "vo_updater.py")
+    candidate = os.path.join(app_dir, "updater.py")
     if not os.path.isfile(candidate):
         return
     current_path = os.path.realpath(sys.argv[0])
@@ -301,7 +301,6 @@ def cmd_remove(args: argparse.Namespace) -> int:
     install_root = args.install_root
     app_dir = os.path.join(install_root, APP_DIRNAME)
     backup_dir = os.path.join(install_root, APP_BACKUP_DIRNAME)
-    bootstrap_dir = os.path.join(install_root, BOOTSTRAP_DIRNAME)
     log(f"remove installRoot={install_root}")
 
     env = os.environ.copy()
@@ -334,7 +333,6 @@ def cmd_remove(args: argparse.Namespace) -> int:
 
     shutil.rmtree(app_dir, ignore_errors=True)
     shutil.rmtree(backup_dir, ignore_errors=True)
-    shutil.rmtree(bootstrap_dir, ignore_errors=True)
     state_path = os.path.join(install_root, "state.json")
     if os.path.exists(state_path):
         os.remove(state_path)
@@ -349,7 +347,7 @@ def main() -> None:
     parser.add_argument("--backend", default=_env("VO_BACKEND", "http://localhost:3100"), help="Backend base URL")
     parser.add_argument(
         "--install-root",
-        default=_env("VO_INSTALL_ROOT", "/opt/vehicle-overseer-device"),
+        default=_env("VO_INSTALL_ROOT", "/opt/vehicle-overseer"),
         help="Install root with app/ directory",
     )
     parser.add_argument("--force", action="store_true", help="Apply even if artifact matches current")

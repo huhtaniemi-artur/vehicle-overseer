@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+""" 
 Device/service simulator (non-Node) for local development.
 
 - Posts periodic status pings to the backend (/api/ping) for multiple vehicles.
@@ -9,13 +9,13 @@ Device/service simulator (non-Node) for local development.
 
 Usage:
   # 1) One-time network setup (requires sudo)
-  sudo python3 backend/tools/simulator.py net-setup
+    sudo python3 device-service/simulator.py net-setup
 
   # Optional: remove the dummy interface (requires sudo)
-  sudo python3 backend/tools/simulator.py net-cleanup
+    sudo python3 device-service/simulator.py net-cleanup
 
   # 2) Run simulator (no sudo; uses IPs configured by net-setup)
-  python3 backend/tools/simulator.py run --backend http://localhost:3100
+    python3 device-service/simulator.py run --backend http://localhost:3100
 
 Notes:
   - Backend is expected to use the `ip-address` reported in POST pings as the device host,
@@ -71,6 +71,7 @@ def post_json(url: str, payload: dict) -> None:
     with urllib.request.urlopen(req, timeout=5) as resp:
         resp.read()
 
+
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=True, text=True, capture_output=True)
 
@@ -95,7 +96,7 @@ class DummyNetwork:
     def _require_root(self) -> None:
         if os.geteuid() != 0:
             raise PermissionError(
-                "Dummy interface setup requires root (try: sudo python3 backend/tools/simulator.py ...)"
+                "Dummy interface setup requires root (try: sudo python3 device-service/simulator.py ...)"
             )
 
     def exists(self) -> bool:
@@ -269,6 +270,7 @@ def _vehicle_device_ips(net_mode: str, gateway_ip: str, device_ip_start: int) ->
         return [f"127.0.0.{device_ip_start + idx}" for idx in range(len(VEHICLES))]
     dummy_base = gateway_ip.rsplit(".", 1)[0]
     return [f"{dummy_base}.{device_ip_start + idx}" for idx in range(len(VEHICLES))]
+
 
 def _iface_ipv4_addrs(iface: str) -> list[ipaddress.IPv4Interface]:
     out = _run(["ip", "-o", "-f", "inet", "addr", "show", "dev", iface]).stdout

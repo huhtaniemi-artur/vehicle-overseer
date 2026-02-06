@@ -316,6 +316,30 @@ async function main() {
     );
   };
 
+  const provisioningRoots = [
+    rootDir,
+    path.resolve(rootDir, '..'),
+    devRootDir,
+    path.resolve(devRootDir, '..')
+  ];
+  const resolveProvisioningFile = (relativePath) => {
+    const candidates = [
+      // Current layout: repoRoot/updater/...
+      ...provisioningRoots.map((r) => path.join(r, 'updater', relativePath)),
+      // Legacy layouts (keep for compatibility): backend/service, backend/tools
+      ...provisioningRoots.map((r) => path.join(r, 'service', relativePath)),
+      ...provisioningRoots.map((r) => path.join(r, 'tools', relativePath))
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  };
+
 
   const createBootstrapToken = ({ kind }) => {
     const token = crypto.randomBytes(24).toString('base64url');
@@ -471,20 +495,24 @@ async function main() {
       );
 
       const backendBase = `http://${req.headers.host}`;
-      const installRoot = '/opt/vehicle-overseer-device';
+      const installRoot = '/opt/vehicle-overseer';
       const envDir = '/etc/vehicle-overseer';
       const shQuote = (s) => `'${String(s).replace(/'/g, `'\"'\"'`)}'`;
-      const tmplPath = path.join(rootDir, 'tools', 'srvcsetup.sh');
+      const tmplPath = resolveProvisioningFile('srvcsetup.sh');
+      if (!tmplPath) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end('srvcsetup.sh not found on server (expected updater/srvcsetup.sh)\n');
+      }
       const template = fs.readFileSync(tmplPath, 'utf-8');
       const script = template
         .replaceAll('__BACKEND_BASE__', shQuote(backendBase))
         .replaceAll('__LABEL__', shQuote(label))
         .replaceAll('__TOKEN__', shQuote(token))
         .replaceAll('__REPORT_IFACE__', shQuote(reportIface))
-	        .replaceAll('__ACTION_PORT__', String(actionPort))
-	        .replaceAll('__LOG_PORT__', String(logPort))
+	      .replaceAll('__ACTION_PORT__', String(actionPort))
+	      .replaceAll('__LOG_PORT__', String(logPort))
         .replaceAll('__PING_INTERVAL_S__', String(pingIntervalS))
-	        .replaceAll('__INSTALL_ROOT__', shQuote(installRoot))
+	      .replaceAll('__INSTALL_ROOT__', shQuote(installRoot))
         .replaceAll('__ENV_DIR__', shQuote(envDir));
 
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -517,10 +545,10 @@ async function main() {
       try {
         const name = pathname.split('/').pop();
         const allowed = new Set([
-          'vehicle-overseer-device.service',
-          'vo-updater.service',
-          'vo-updater.timer',
-          'vo_updater.py',
+          'device.service',
+          'updater.service',
+          'updater.timer',
+          'updater.py',
           'device.env',
           'updater.env'
         ]);
@@ -560,20 +588,27 @@ async function main() {
           return res.end(content);
         }
 
-	        if (name === 'updater.env') {
-	          const content = [
-	            `VO_INSTALL_ROOT=/opt/vehicle-overseer-device`,
-	            `VO_ARTIFACT_KEY_PATH=/etc/vehicle-overseer/artifact.key`,
-	            `VO_DEVICE_UID_PATH=/etc/vehicle-overseer/device.uid`,
-	            ``
-	          ].join('\n');
-	          res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-	          return res.end(content);
-	        }
+        if (name === 'updater.env') {
+	        const content = [
+            `VO_INSTALL_ROOT=/opt/vehicle-overseer`,
+	          `VO_ARTIFACT_KEY_PATH=/etc/vehicle-overseer/artifact.key`,
+	          `VO_DEVICE_UID_PATH=/etc/vehicle-overseer/device.uid`,
+	          ``
+	        ].join('\n');
+	        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+	        return res.end(content);
+	      }
 
-        const filePath = name === 'vo_updater.py'
-          ? path.join(rootDir, 'tools', 'vo_updater.py')
-          : path.join(rootDir, 'tools', 'systemd', name);
+        let filePath;
+        if (name === 'updater.py') {
+          filePath = resolveProvisioningFile('updater.py');
+        } else {
+          filePath = resolveProvisioningFile(path.join('systemd', name));
+        }
+        if (!filePath) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          return res.end('not found\n');
+        }
         const content = fs.readFileSync(filePath, 'utf-8');
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end(content);

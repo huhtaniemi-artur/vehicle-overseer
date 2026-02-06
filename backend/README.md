@@ -49,7 +49,7 @@ Key files
 - `config.json`: Optional runtime config (if missing, backend uses internal defaults).
 - `schema.sql`: Tables for update artifacts/versions, per-device update targets, device keys, and bootstrap tokens.
 - `src/index.js`: Minimal functional server with HTTP endpoints, shared WebSocket for UI, per-device log WebSocket proxy, SQLite (sql.js/WASM) wiring for update metadata, and per-action backend→device connection stub (TCP in dev; later real device integration).
-- `backend/tools/simulator.py`: Python simulator that acts like a device/service (POST pings with uid + label, TCP action endpoint, TCP log stream).
+- `../device-service/simulator.py`: Python simulator that acts like a device/service (POST pings with uid + label, TCP action endpoint, TCP log stream).
 
 Endpoints
 - HTTP: `GET /api/config`, `GET /api/entries`, `POST /api/ping`, `POST /api/action/select`, `GET /api/health`

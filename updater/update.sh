@@ -13,13 +13,23 @@ APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_ROOT="${VO_INSTALL_ROOT:-$(cd "$APP_DIR/.." && pwd)}"
 SYSTEMD_DIR=/etc/systemd/system
 
+map_unit_name() {
+  base="$(basename "$1")"
+  case "$base" in
+    device.service) echo "vehicle-overseer-device.service" ;;
+    updater.service) echo "vehicle-overseer-updater.service" ;;
+    updater.timer) echo "vehicle-overseer-updater.timer" ;;
+    *) echo "$base" ;;
+  esac
+}
+
 if [ "$ACTION" = "install" ]; then
   mkdir -p "$SYSTEMD_DIR"
   if [ -d "$APP_DIR/systemd" ]; then
     log "install systemd units"
     for unit in "$APP_DIR"/systemd/*.service "$APP_DIR"/systemd/*.timer; do
       [ -f "$unit" ] || continue
-      dst="$SYSTEMD_DIR/$(basename "$unit")"
+      dst="$SYSTEMD_DIR/$(map_unit_name "$unit")"
       cp "$unit" "$dst"
       chmod 0644 "$dst"
     done
@@ -30,7 +40,7 @@ if [ "$ACTION" = "install" ]; then
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || log "warn: systemctl daemon-reload failed"
     systemctl restart vehicle-overseer-device.service || log "warn: failed to restart vehicle-overseer-device.service"
-    systemctl enable --now vo-updater.timer || log "warn: failed to enable vo-updater.timer"
+    systemctl enable --now vehicle-overseer-updater.timer || log "warn: failed to enable vehicle-overseer-updater.timer"
   else
     log "warn: systemctl not found (skip service enable)"
   fi
@@ -40,10 +50,11 @@ fi
 if [ "$ACTION" = "remove" ]; then
   if command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now vehicle-overseer-device.service || log "warn: failed to disable vehicle-overseer-device.service"
+    systemctl disable --now vehicle-overseer-updater.timer || log "warn: failed to disable vehicle-overseer-updater.timer"
   else
     log "warn: systemctl not found (skip service disable)"
   fi
-  rm -f "$SYSTEMD_DIR/vehicle-overseer-device.service"
+  rm -f "$SYSTEMD_DIR/vehicle-overseer-device.service" "$SYSTEMD_DIR/vehicle-overseer-updater.service" "$SYSTEMD_DIR/vehicle-overseer-updater.timer"
   exit 0
 fi
 

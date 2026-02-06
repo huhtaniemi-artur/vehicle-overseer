@@ -11,7 +11,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Create common directories but do not install any project code/config.
-RUN mkdir -p /opt/vehicle-overseer-device /etc/vehicle-overseer /opt/fordvda \
+RUN mkdir -p /opt/vehicle-overseer /etc/vehicle-overseer /opt/fordvda \
   && cat > /opt/fordvda/properties.json <<'EOF'
 {
     "backend": {
