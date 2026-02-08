@@ -9,15 +9,20 @@ import path from 'path';
 import url from 'url';
 import net from 'net';
 import crypto from 'crypto';
-import { spawnSync } from 'child_process';
 import initSqlJs from 'sql.js';
 import { WebSocketServer } from 'ws';
+import { runArtifactsCli, refreshArtifacts } from './artifacts_cli.js';
 
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+// Derive this file's directory in both dev (node) and SEA binary contexts without import.meta.
+const selfDir = (() => {
+  if (process.argv[1]) return path.dirname(path.resolve(process.argv[1]));
+  if (process.execPath) return path.dirname(process.execPath);
+  return process.cwd();
+})();
 // Runtime root directory for config/data/assets.
 // - Rely on process.cwd() so systemd can control it via WorkingDirectory=.
 // - Fallback to repo backend/ directory for local dev.
-const devRootDir = path.resolve(__dirname, '..');
+const devRootDir = path.resolve(selfDir, '..');
 const rootDir = process.cwd() || devRootDir;
 
 async function main() {
@@ -43,6 +48,20 @@ async function main() {
   };
 
   const config = loadConfig();
+
+  // CLI mode: manage artifacts without starting the server.
+  // This is used in SEA dist so the server can import artifacts without Node installed.
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'artifacts') {
+    const exitCode = await runArtifactsCli({
+      argv: argv.slice(1),
+      rootDir,
+      config
+    });
+    process.exit(exitCode);
+  }
+
+
 
   // Ensure data directory
   const dataDir = path.resolve(rootDir, 'data');
@@ -114,7 +133,7 @@ async function main() {
   };
 
   const getArtifactById = (artifactId) => getRow(
-    'SELECT id, sha256, filename, size_bytes FROM artifacts WHERE id = $id LIMIT 1',
+    'SELECT id, filename, size_bytes FROM artifacts WHERE id = $id LIMIT 1',
     { $id: artifactId }
   );
 
@@ -152,142 +171,13 @@ async function main() {
   const artifactsDir = path.resolve(dataDir, 'artifacts');
   fs.mkdirSync(artifactsDir, { recursive: true });
 
-  const computeFileSha256 = (filePath) => {
-    const hash = crypto.createHash('sha256');
-    hash.update(fs.readFileSync(filePath));
-    return hash.digest('hex');
+  const reconcileArtifacts = async () => {
+    await refreshArtifacts({ rootDir, config });
   };
 
-  let tarAvailable = true;
-  const readVersionFromArtifact = (filePath) => {
-    if (!tarAvailable) return null;
-    for (const candidate of ['VERSION', './VERSION', 'version.txt', './version.txt']) {
-      const proc = spawnSync('tar', ['-xOzf', filePath, candidate], { encoding: 'utf-8' });
-      if (proc.error) {
-        if (proc.error.code === 'ENOENT') {
-          tarAvailable = false;
-          console.warn('[artifacts] tar not found; cannot inspect versions');
-          return null;
-        }
-        continue;
-      }
-      if (proc.status === 0) {
-        const value = String(proc.stdout || '').trim();
-        if (value) return value;
-      }
-    }
-    return null;
-  };
-
-  const reconcileArtifacts = () => {
-    let changed = false;
-    const diskArtifacts = new Map();
-    const entriesOnDisk = fs.readdirSync(artifactsDir);
-    for (const name of entriesOnDisk) {
-      const filePath = path.join(artifactsDir, name);
-      const st = fs.statSync(filePath);
-      if (!st.isFile()) continue;
-      const sha = computeFileSha256(filePath);
-      let finalName = name;
-      let finalPath = filePath;
-      if (sha !== name) {
-        const targetPath = path.join(artifactsDir, sha);
-        if (!fs.existsSync(targetPath)) {
-          fs.renameSync(filePath, targetPath);
-          finalName = sha;
-          finalPath = targetPath;
-        } else {
-          console.warn(`[artifacts] hash mismatch for ${name}; expected ${sha} (keeping existing ${sha})`);
-          continue;
-        }
-      }
-      diskArtifacts.set(sha, { id: sha, path: finalPath, sizeBytes: st.size, filename: finalName });
-    }
-
-    const dbArtifacts = getRows('SELECT id, sha256, filename, size_bytes FROM artifacts');
-    const dbArtifactsMap = new Map(dbArtifacts.map((row) => [String(row.id), row]));
-
-    for (const row of dbArtifacts) {
-      const id = String(row.id);
-      if (!diskArtifacts.has(id)) {
-        run('DELETE FROM versions WHERE artifact_id = $id', { $id: id });
-        run('DELETE FROM artifacts WHERE id = $id', { $id: id });
-        changed = true;
-      }
-    }
-
-    for (const [id, info] of diskArtifacts.entries()) {
-      const existing = dbArtifactsMap.get(id);
-      if (!existing) {
-        run(
-          `INSERT INTO artifacts (id, sha256, filename, size_bytes, created_at)
-           VALUES ($id, $sha, $fn, $sz, datetime('now'))`,
-          {
-            $id: id,
-            $sha: id,
-            $fn: info.filename,
-            $sz: info.sizeBytes
-          }
-        );
-        changed = true;
-      } else if (Number(existing.size_bytes) !== info.sizeBytes || String(existing.sha256) !== id) {
-        run(
-          `UPDATE artifacts
-           SET sha256 = $sha, size_bytes = $sz
-           WHERE id = $id`,
-          { $id: id, $sha: id, $sz: info.sizeBytes }
-        );
-        changed = true;
-      }
-    }
-
-    const existingVersions = new Map();
-    for (const row of getRows('SELECT version, artifact_id FROM versions')) {
-      const version = String(row.version);
-      if (version === 'latest') continue;
-      existingVersions.set(version, String(row.artifact_id));
-    }
-
-    for (const [id, info] of diskArtifacts.entries()) {
-      const version = readVersionFromArtifact(info.path);
-      if (!version) continue;
-      if (!existingVersions.has(version)) {
-        run(
-          `INSERT INTO versions (version, artifact_id, created_at, notes)
-           VALUES ($v, $aid, datetime('now'), NULL)`,
-          { $v: version, $aid: id }
-        );
-        existingVersions.set(version, id);
-        changed = true;
-      }
-    }
-
-    const newest = getRow(
-      `SELECT version, artifact_id
-       FROM versions
-       WHERE version != 'latest'
-       ORDER BY datetime(created_at) DESC, version DESC
-       LIMIT 1`
-    );
-    if (newest?.version && newest?.artifact_id) {
-      const latest = getRow('SELECT artifact_id FROM versions WHERE version = $v LIMIT 1', { $v: 'latest' });
-      if (!latest || String(latest.artifact_id) !== String(newest.artifact_id)) {
-        run(
-          `INSERT OR REPLACE INTO versions (version, artifact_id, created_at, notes)
-           VALUES ($v, $aid, datetime('now'), NULL)`,
-          { $v: 'latest', $aid: newest.artifact_id }
-        );
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      saveDb();
-      console.log('[artifacts] reconciled artifacts and versions');
-    }
-  };
-
-  reconcileArtifacts();
+  // Artifact reconciliation is now manual via CLI: `./backend artifacts refresh`
+  // Uncomment the line below to auto-reconcile on startup:
+  // await reconcileArtifacts();
 
   const getClientConfig = () => ({
     sshUser: config.defaultSshUser ?? null,
@@ -379,7 +269,6 @@ async function main() {
          v.version AS version,
          a.id AS artifactId,
          a.filename AS filename,
-         a.sha256 AS sha256,
          a.size_bytes AS size_bytes,
          v.created_at AS created_at
        FROM versions v
@@ -749,30 +638,31 @@ async function main() {
 
 	        const { desiredVersion } = resolveUpdateTarget(deviceUid);
 	        const artifact = resolveArtifact({ desiredVersion });
-	        if (!artifact) {
-	          res.writeHead(404, { 'Content-Type': 'application/json' });
-	          return res.end(JSON.stringify({
-	            error: 'no artifact available',
-	            hint: 'Import a version into the backend DB and store the package bytes at backend/data/artifacts/<sha256>.'
-	          }));
-	        }
+          if (!artifact) {
+            const manifest = {
+              uid: deviceUid,
+              version: null,
+              artifact: null,
+              issuedAt: new Date().toISOString()
+            };
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify(manifest));
+          }
 
           const artifactPath = `/api/device/artifacts/${encodeURIComponent(artifact.artifactId)}`;
-	        const manifest = {
-	          uid: deviceUid,
-	          version: artifact.version,
-	          artifact: {
-	            id: artifact.artifactId,
-	            url: artifactPath,
-	            sha256: artifact.sha256,
-	            filename: artifact.filename,
-	            sizeBytes: artifact.size_bytes
-	          },
-	          issuedAt: new Date().toISOString()
-	        };
+          const manifest = {
+            uid: deviceUid,
+            version: artifact.version,
+            artifact: {
+              id: artifact.artifactId,
+              url: artifactPath,
+              sizeBytes: artifact.size_bytes
+            },
+            issuedAt: new Date().toISOString()
+          };
 
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(manifest));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(manifest));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'manifest error', details: err.message }));
@@ -787,16 +677,20 @@ async function main() {
 	          return res.end(JSON.stringify({ error: 'invalid artifact path' }));
 	        }
 	        const artifactId = safeName(decodeURIComponent(parts[3]), 'artifactId');
-	        const artifact = getArtifactById(artifactId);
+          const artifact = getArtifactById(artifactId);
 	        if (!artifact) {
 	          res.writeHead(404, { 'Content-Type': 'application/json' });
 	          return res.end(JSON.stringify({ error: 'artifact not found' }));
 	        }
+          if (!artifact.filename) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'artifact database error' }));
+          }
 
-	        const filePath = path.resolve(artifactsDir, artifactId);
-	        if (!filePath.startsWith(path.resolve(artifactsDir) + path.sep) || !fs.existsSync(filePath)) {
-	          res.writeHead(404, { 'Content-Type': 'application/json' });
-	          return res.end(JSON.stringify({ error: 'artifact file missing on server' }));
+          const filePath = path.resolve(artifactsDir, artifact.filename);
+          if (!filePath.startsWith(path.resolve(artifactsDir) + path.sep) || !fs.existsSync(filePath)) {
+	          res.writeHead(500, { 'Content-Type': 'application/json' });
+	          return res.end(JSON.stringify({ error: 'artifact file error' }));
 	        }
 
 	        const searchParams = new url.URL(req.url, `http://${req.headers.host}`).searchParams;
@@ -817,14 +711,14 @@ async function main() {
 	        }
 	        const ivHex = crypto.randomBytes(16).toString('hex');
 
-	        res.writeHead(200, {
-	          'Content-Type': 'application/octet-stream',
-	          'Content-Length': artifact.size_bytes,
-	          'X-Artifact-Sha256': artifact.sha256,
-	          'X-VO-Enc': 'aes-256-ctr',
-	          'X-VO-Iv': ivHex,
-	          ...(keyRow?.key_id ? { 'X-VO-KeyId': String(keyRow.key_id) } : {})
-	        });
+          res.writeHead(200, {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': artifact.size_bytes,
+            'X-Artifact-Id': artifact.id,
+            'X-VO-Enc': 'aes-256-ctr',
+            'X-VO-Iv': ivHex,
+            ...(keyRow?.key_id ? { 'X-VO-KeyId': String(keyRow.key_id) } : {})
+          });
 
 	        const stream = fs.createReadStream(filePath);
 	        const iv = Buffer.from(ivHex, 'hex');

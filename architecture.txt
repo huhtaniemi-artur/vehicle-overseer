@@ -38,7 +38,8 @@ Architecture overview (current implementation + clarified target behavior)
     - Updates (artifact distribution):
       - Artifacts are stored by hash under `backend/data/artifacts/<sha256>` (artifact id = sha256).
       - Versions are tags in SQLite (`versions.version`) mapped to an artifact id (`versions.artifact_id`).
-        - Local tooling: `node updater/artifacts.js import ./artifact.tar.gz --version vX.Y.Z`
+        - Local tooling: `node updater/artifacts.js vX.Y.Z --module ./updater --module ./device-service`
+        - Server (SEA dist): `./vehicle-overseer-backend artifacts import /path/to/<artifact-hash>`
   - WebSocket:
     - Shared UI stream `/ws` sends `init` (full snapshot on connect) and `entry` deltas (per UID update).
     - Per-device log stream `/logs?uid=...` streams logs proxied from the device/service (in dev, the simulator acts as the device log source).

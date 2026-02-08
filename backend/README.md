@@ -39,18 +39,10 @@ SEA binary build (official Node “Single Executable Application”)
 
 Artifacts
 ---------
-Artifact management is split into two operations:
-- `make`: create a `.tar.gz` artifact from a directory (or accept an existing `.tar.gz`). This does not touch SQLite.
-- `import`: copy artifact bytes into the backend’s runtime `data/` directory and update SQLite tables (`artifacts`, `versions`).
-
-Local (developer machine): make artifacts
-- Shorthand (path implies `make`): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
-- Explicit: `node updater/artifacts.js make ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
-- Combined (make + import into your local backend workspace): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz --import`
-
-Local (developer machine): import into your local backend workspace
-- From repo root: `node updater/artifacts.js import ./artifact_v0.1.0.tar.gz --version v0.1.0`
-- Shortcut (from `backend/`): `npm run artifacts -- import ../artifact_v0.1.0.tar.gz --version v0.1.0`
+Artifacts are hash-named outer tar files (containing `hash` + `data`/inner tar.gz).
+- Build (from backend/): `node ../updater/artifacts.js <version> --module <path> [--module <path>]...` writes the artifact to `data/artifacts/<hash>` and prints the hash.
+- Sync to DB (dev): `node src/index.js artifacts refresh` to add/remove artifacts on disk and update SQLite (`artifacts`, `versions`, `latest`).
+- Server (SEA binary): copy the hash-named artifact into `data/artifacts/` and run `./vehicle-overseer-backend artifacts refresh`, or import directly: `./vehicle-overseer-backend artifacts import /path/to/<artifact-hash>`.
 
 Notes:
 - If the server is already running, the backend reloads the SQLite DB on subsequent HTTP requests when the DB file mtime changes.

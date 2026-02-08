@@ -2,38 +2,88 @@
 
 // Artifact tooling.
 //
-// Goals:
-// - `make`: create a .tar.gz artifact from a directory (or accept an existing tar.gz) WITHOUT touching the backend DB.
-// - `import`: copy artifact bytes into backend data/artifacts/<sha256> and record version->artifact mapping in SQLite.
+// Creates a nested artifact:
+//   outer tar (uncompressed)
+//     - hash (SHA256 of inner tar.gz)
+//     - data (payload tar.gz)
+// Outputs to ./data/artifacts/<hash>.
+//backend discovers artifacts via `refresh` command or on restart.
 //
-// Typical flows:
-// - Local build:   node updater/artifacts.js make ./release-dir --version v0.1.0 --out ./artifact.tar.gz
-// - Local import:  node updater/artifacts.js import ./artifact.tar.gz --version v0.1.0
-// - Combined:      node updater/artifacts.js make ./release-dir --version v0.1.0 --import
-// - Shorthand:     node updater/artifacts.js ./release-dir --version v0.1.0   (implies `make`)
+// Usage:
+//   node updater/artifacts.js <version> --module <path> [--module <path>]... [--script <path>]
+//
+// Example:
+//   node updater/artifacts.js v0.1.0 --module ./updater --module ./device-service
+//
+// The artifact is created in a temp directory, SHA256 is computed, and the file is
+// moved to ./data/artifacts/<sha256>. Run from backend/ directory.
 
 import fs from 'fs';
 import path from 'path';
-import url from 'url';
 import os from 'os';
 import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..');
-const backendRoot = path.join(repoRoot, 'backend');
-const updaterRoot = path.resolve(__dirname);
-const deviceServiceRoot = path.join(repoRoot, 'device-service');
-
-const SYSTEMD_UNITS = ['updater.service', 'updater.timer'];
+// Always emit into backend/data/artifacts so callers can run this script from any directory.
+const ARTIFACTS_DIR = path.resolve(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'backend', 'data', 'artifacts'));
 const UPDATE_SCRIPT = 'update.sh';
-const UPDATER_SETUP_SCRIPT = 'updater-setup.sh';
-const SERVICE_SETUP_SCRIPT = 'service-setup.sh';
+const SETUP_SCRIPT = 'setup.sh';
 
-const DEFAULT_UPDATE_SH = `#!/bin/sh
+function parseArgs(argv) {
+  const out = { modules: [], version: null, script: null, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') {
+      out.help = true;
+    } else if (a === '--module' || a === '-m') {
+      const val = argv[++i];
+      if (val) out.modules.push(val);
+    } else if (a === '--script' || a === '-s') {
+      out.script = argv[++i];
+    } else if (!a.startsWith('-') && !out.version) {
+      out.version = a;
+    }
+  }
+  return out;
+}
+
+function usage(exitCode = 0) {
+  const msg = `Usage:
+  node updater/artifacts.js <version> --module <path> [--module <path>]... [--script <path>]
+
+Arguments:
+  <version>           Version tag (mandatory, e.g. v0.1.0)
+  --module, -m <path> Module directory to include (repeatable, order preserved)
+  --script, -s <path> Custom update.sh script (optional)
+
+Behavior:
+  - Copies each module directory into the artifact under its basename
+  - Validates that each module has a setup.sh in its root (warns if missing)
+  - Generates update.sh that calls each module's setup.sh in order (unless --script provided)
+  - Creates VERSION file from <version> argument
+  - Builds inner tar.gz payload
+  - Computes SHA256 of inner tar.gz, writes it to hash file
+  - Builds outer tar (uncompressed) containing hash + data (inner tar.gz)
+  - Outputs to ./data/artifacts/
+  - Prints the SHA256 + filename to stdout
+
+Example:
+  cd backend
+  node ../updater/artifacts.js v0.1.0 --module ../updater --module ../device-service
+`;
+  process.stderr.write(msg);
+  process.exit(exitCode);
+}
+
+function generateUpdateScript(moduleNames) {
+  const calls = moduleNames
+    .map((name) => `run_if_present "$APP_DIR/${name}/${SETUP_SCRIPT}"`)
+    .join('\n');
+
+  return `#!/bin/sh
 set -eu
 
-log() { printf '[update.sh] %s\n' "$*" >&2; }
+log() { printf '[update.sh] %s\\n' "$*" >&2; }
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -50,151 +100,23 @@ run_if_present() {
   fi
 }
 
-run_if_present "$APP_DIR/updater/${UPDATER_SETUP_SCRIPT}"
-run_if_present "$APP_DIR/device-service/${SERVICE_SETUP_SCRIPT}"
+${calls}
 
 exit 0
 `;
-
-function parseArgs(argv) {
-  const out = { _: [] };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--help' || a === '-h') out.help = true;
-    else if (a === '--version' || a === '-v') out.version = argv[++i];
-    else if (a === '--notes') out.notes = argv[++i];
-    else if (a === '--update-script') out.updateScript = argv[++i];
-    else if (a === '--out' || a === '-o') out.out = argv[++i];
-    else if (a === '--import') out.import = true;
-    else if (a === '--backend-root') out.backendRoot = argv[++i];
-    else if (a === '--db') out.db = argv[++i];
-    else if (a === '--artifacts-dir') out.artifactsDir = argv[++i];
-    else out._.push(a);
-  }
-  return out;
 }
 
-function usage(exitCode = 0) {
-  const msg = [
-    'Usage:',
-    '  node updater/artifacts.js make <path> [--version <tag>] [--out <artifact.tar.gz>] [--notes "..."] [--update-script <path>] [--import]',
-    '  node updater/artifacts.js import <artifact.tar.gz> [--version <tag>] [--notes "..."]',
-    '  node updater/artifacts.js <path> [--version <tag>] [--out <artifact.tar.gz>] [--update-script <path>] [--import]    (shorthand for `make`)',
-    '',
-    'Notes:',
-    '  - `make` only creates a tar.gz. It does NOT touch SQLite.',
-    '  - `import` copies bytes into backend data/ and writes SQLite rows (artifacts + versions).',
-    '  - `--import` on `make` runs import immediately after build using the repo backend/ by default.',
-    '  - `--update-script` lets you provide a custom update.sh; otherwise a default update.sh is injected if missing.',
-    '  - If `--version` is omitted on import, the importer tries to read VERSION from inside the tarball (requires `tar`).',
-    '',
-    'Defaults (repo layout):',
-    `  --backend-root ${backendRoot}`,
-    '  DB:          <backend-root>/data/vehicle_overseer.sqlite (or backend/config.json dbPath)',
-    '  Artifacts:   <backend-root>/data/artifacts/',
-    '',
-  ].join('\n');
-  process.stderr.write(msg + '\n');
-  process.exit(exitCode);
-}
-
-function shQuote(s) {
-  return `'${String(s).replace(/'/g, `'"'"'`)}'`;
-}
-
-function buildTarFromDir(dirPath, outTarPath) {
+function buildTarFromDir(dirPath, outTarPath, { gzip } = { gzip: true }) {
   const st = fs.statSync(dirPath);
   if (!st.isDirectory()) throw new Error(`input must be a directory: ${dirPath}`);
-  const proc = spawnSync('tar', ['-C', dirPath, '-czf', outTarPath, '.'], { stdio: 'pipe' });
+  const args = ['-C', dirPath];
+  if (gzip) args.push('-czf'); else args.push('-cf');
+  args.push(outTarPath, '.');
+  const proc = spawnSync('tar', args, { stdio: 'pipe' });
   if (proc.error) throw proc.error;
   if (proc.status !== 0) {
     const stderr = (proc.stderr || Buffer.alloc(0)).toString('utf-8').trim();
     throw new Error(`tar failed (exit ${proc.status}): ${stderr || 'unknown error'}`);
-  }
-}
-
-function ensureSystemdUnits(stagingDir) {
-  const srcDir = path.join(updaterRoot, 'systemd');
-  if (!fs.existsSync(srcDir)) return;
-  const systemdDir = path.join(stagingDir, 'systemd');
-  for (const name of SYSTEMD_UNITS) {
-    const rootCandidate = path.join(stagingDir, name);
-    const systemdCandidate = path.join(systemdDir, name);
-    if (fs.existsSync(rootCandidate) || fs.existsSync(systemdCandidate)) continue;
-    fs.mkdirSync(systemdDir, { recursive: true });
-    fs.copyFileSync(path.join(srcDir, name), systemdCandidate);
-    process.stderr.write(`[artifacts] injected default systemd template: systemd/${name}\n`);
-  }
-}
-
-function ensureUpdateScript(stagingDir, overridePath) {
-  const scriptPath = path.join(stagingDir, UPDATE_SCRIPT);
-  if (overridePath) {
-    const src = path.resolve(overridePath);
-    if (!fs.existsSync(src) || !fs.statSync(src).isFile()) {
-      throw new Error(`--update-script not found: ${src}`);
-    }
-    fs.copyFileSync(src, scriptPath);
-    fs.chmodSync(scriptPath, 0o755);
-    process.stderr.write(`[artifacts] set ${UPDATE_SCRIPT} from --update-script (${src})\n`);
-    return;
-  }
-
-  if (fs.existsSync(scriptPath)) return;
-  fs.writeFileSync(scriptPath, DEFAULT_UPDATE_SH, 'utf-8');
-  fs.chmodSync(scriptPath, 0o755);
-  process.stderr.write(`[artifacts] injected default ${UPDATE_SCRIPT} (no update.sh provided)\n`);
-}
-
-function ensureUpdaterSetupScript(stagingDir) {
-  const dstDir = path.join(stagingDir, 'updater');
-  fs.mkdirSync(dstDir, { recursive: true });
-
-  const dst = path.join(dstDir, UPDATER_SETUP_SCRIPT);
-  if (fs.existsSync(dst)) return;
-
-  const src = path.join(updaterRoot, UPDATER_SETUP_SCRIPT);
-  if (!fs.existsSync(src)) {
-    throw new Error(`missing template: ${src}`);
-  }
-  fs.copyFileSync(src, dst);
-  fs.chmodSync(dst, 0o755);
-  process.stderr.write(`[artifacts] injected default updater/${UPDATER_SETUP_SCRIPT}\n`);
-}
-
-function ensureDeviceServicePayload(stagingDir) {
-  // The runtime contract is:
-  // - update.sh calls app/device-service/service-setup.sh
-  // - device-service/service-setup.sh installs /etc/systemd/system/vehicle-overseer.service
-  // - systemd unit runs /opt/vehicle-overseer/app/service.py
-  // Artifact-maker makes this easy by injecting these defaults if missing.
-
-  const dstDeviceDir = path.join(stagingDir, 'device-service');
-  fs.mkdirSync(dstDeviceDir, { recursive: true });
-
-  const srcSetup = path.join(deviceServiceRoot, SERVICE_SETUP_SCRIPT);
-  const dstSetup = path.join(dstDeviceDir, SERVICE_SETUP_SCRIPT);
-  if (!fs.existsSync(dstSetup)) {
-    fs.copyFileSync(srcSetup, dstSetup);
-    fs.chmodSync(dstSetup, 0o755);
-    process.stderr.write(`[artifacts] injected default device-service/${SERVICE_SETUP_SCRIPT}\n`);
-  }
-
-  const srcUnit = path.join(deviceServiceRoot, 'systemd', 'vehicle-overseer.service');
-  const dstUnitDir = path.join(dstDeviceDir, 'systemd');
-  const dstUnit = path.join(dstUnitDir, 'vehicle-overseer.service');
-  if (!fs.existsSync(dstUnit)) {
-    fs.mkdirSync(dstUnitDir, { recursive: true });
-    fs.copyFileSync(srcUnit, dstUnit);
-    process.stderr.write('[artifacts] injected default device-service/systemd/vehicle-overseer.service\n');
-  }
-
-  const srcService = path.join(deviceServiceRoot, 'service.py');
-  const dstService = path.join(stagingDir, 'service.py');
-  if (!fs.existsSync(dstService)) {
-    fs.copyFileSync(srcService, dstService);
-    fs.chmodSync(dstService, 0o755);
-    process.stderr.write('[artifacts] injected default service.py\n');
   }
 }
 
@@ -203,119 +125,121 @@ function sha256FileHex(filePath) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-function defaultArtifactOutPath(version) {
-  if (!version) return path.resolve('artifact.tar.gz');
-  const safeV = String(version).replace(/[^A-Za-z0-9._-]/g, '_');
-  return path.resolve(`artifact_${safeV}.tar.gz`);
-}
-
-async function importViaBackendCli({ backendRootPath, artifactPath, version, notes, db, artifactsDir }) {
-  // Import uses backend code (so schema/db defaults are consistent).
-  // This requires node for the tooling path; the SEA binary has its own `artifacts import` mode.
-  const cliPath = path.join(backendRootPath, 'src', 'artifacts_cli.js');
-  if (!fs.existsSync(cliPath)) {
-    throw new Error(`backend artifacts CLI not found: ${cliPath}`);
-  }
-  const nodeArgs = [
-    cliPath,
-    'import',
-    artifactPath,
-    ...(version ? ['--version', version] : []),
-    ...(notes ? ['--notes', notes] : []),
-    ...(db ? ['--db', db] : []),
-    ...(artifactsDir ? ['--artifacts-dir', artifactsDir] : []),
-  ];
-  const proc = spawnSync(process.execPath, nodeArgs, { stdio: 'inherit' });
-  if (proc.error) throw proc.error;
-  if (proc.status !== 0) {
-    throw new Error(`import failed (exit ${proc.status})`);
-  }
-}
-
-async function cmdMake(args) {
-  const inputPath = args._[0];
-  if (!inputPath) usage(2);
-
-  const resolvedInput = path.resolve(inputPath);
-  if (!fs.existsSync(resolvedInput)) {
-    throw new Error(`input path not found: ${resolvedInput}`);
-  }
-
-  const st = fs.statSync(resolvedInput);
-  const outPath = path.resolve(args.out || defaultArtifactOutPath(args.version));
-
-  let tmpDir = null;
-  try {
-    if (st.isDirectory()) {
-      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vo-artifact-'));
-      const stagingDir = path.join(tmpDir, 'staging');
-      fs.mkdirSync(stagingDir, { recursive: true });
-      for (const entry of fs.readdirSync(resolvedInput)) {
-        fs.cpSync(path.join(resolvedInput, entry), path.join(stagingDir, entry), { recursive: true });
-      }
-      ensureSystemdUnits(stagingDir);
-      ensureUpdateScript(stagingDir, args.updateScript);
-      ensureUpdaterSetupScript(stagingDir);
-      ensureDeviceServicePayload(stagingDir);
-      buildTarFromDir(stagingDir, outPath);
-    } else if (st.isFile()) {
-      // If the input is already a tarball, just copy it to the requested output.
-      if (path.resolve(resolvedInput) !== path.resolve(outPath)) {
-        fs.copyFileSync(resolvedInput, outPath);
-      }
-    } else {
-      throw new Error(`unsupported input type: ${resolvedInput}`);
-    }
-
-    const sha256 = sha256FileHex(outPath);
-    const sizeBytes = fs.statSync(outPath).size;
-    process.stdout.write(JSON.stringify({ ok: true, mode: 'make', version: args.version, outPath, sha256, sizeBytes }, null, 2) + '\n');
-
-    if (args.import) {
-      const backendRootPath = path.resolve(args.backendRoot || backendRoot);
-      await importViaBackendCli({
-        backendRootPath,
-        artifactPath: outPath,
-        version: args.version,
-        notes: args.notes,
-        db: args.db,
-        artifactsDir: args.artifactsDir,
-      });
-    }
-  } finally {
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
-async function cmdImport(args) {
-  if (!args._.length) usage(2);
-  const backendRootPath = path.resolve(args.backendRoot || backendRoot);
-  for (const artifactPath of args._) {
-    const resolvedArtifact = path.resolve(artifactPath);
-    await importViaBackendCli({
-      backendRootPath,
-      artifactPath: resolvedArtifact,
-      version: args.version,
-      notes: args.notes,
-      db: args.db,
-      artifactsDir: args.artifactsDir,
-    });
-  }
-}
-
 async function main() {
   const argv = process.argv.slice(2);
-  const inferredCmd = (argv[0] && !['make', 'import', '--help', '-h'].includes(argv[0]) && !argv[0].startsWith('-')) ? 'make' : null;
+  const args = parseArgs(argv);
 
-  const cmd = inferredCmd ? 'make' : argv[0];
-  const rest = inferredCmd ? argv : argv.slice(1);
-
-  const args = parseArgs(rest);
   if (args.help) usage(0);
+  if (!args.version) {
+    process.stderr.write('error: version argument is required\n\n');
+    usage(2);
+  }
+  if (args.modules.length === 0) {
+    process.stderr.write('error: at least one --module is required\n\n');
+    usage(2);
+  }
 
-  if (cmd === 'make') return cmdMake(args);
-  if (cmd === 'import') return cmdImport(args);
-  usage(2);
+  // Resolve module paths and validate
+  const resolvedModules = [];
+  for (const mod of args.modules) {
+    const resolved = path.resolve(mod);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      throw new Error(`module not found or not a directory: ${mod}`);
+    }
+    const name = path.basename(resolved);
+    const setupPath = path.join(resolved, SETUP_SCRIPT);
+    if (!fs.existsSync(setupPath)) {
+      process.stderr.write(`[artifacts] warn: ${name}/${SETUP_SCRIPT} not found\n`);
+    }
+    resolvedModules.push({ path: resolved, name });
+  }
+
+  // Prepare staging directory
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vo-artifact-'));
+  const stagingDir = path.join(tmpDir, 'staging');
+  fs.mkdirSync(stagingDir, { recursive: true });
+
+  try {
+    // Copy each module
+    for (const mod of resolvedModules) {
+      const dest = path.join(stagingDir, mod.name);
+      fs.cpSync(mod.path, dest, { recursive: true });
+      process.stderr.write(`[artifacts] added module: ${mod.name}\n`);
+    }
+
+    // Generate or copy update.sh
+    const updateScriptPath = path.join(stagingDir, UPDATE_SCRIPT);
+    if (args.script) {
+      const src = path.resolve(args.script);
+      if (!fs.existsSync(src) || !fs.statSync(src).isFile()) {
+        throw new Error(`--script not found: ${src}`);
+      }
+      fs.copyFileSync(src, updateScriptPath);
+      fs.chmodSync(updateScriptPath, 0o755);
+      process.stderr.write(`[artifacts] using custom ${UPDATE_SCRIPT} from ${src}\n`);
+    } else {
+      const moduleNames = resolvedModules.map((m) => m.name);
+      const script = generateUpdateScript(moduleNames);
+      fs.writeFileSync(updateScriptPath, script, 'utf-8');
+      fs.chmodSync(updateScriptPath, 0o755);
+      process.stderr.write(`[artifacts] generated ${UPDATE_SCRIPT} for modules: ${moduleNames.join(', ')}\n`);
+    }
+
+    // Create VERSION file
+    const versionPath = path.join(stagingDir, 'VERSION');
+    fs.writeFileSync(versionPath, args.version + '\n', 'utf-8');
+    process.stderr.write(`[artifacts] created VERSION: ${args.version}\n`);
+
+    // Build inner payload tar.gz (without hash file)
+    const innerTarPath = path.join(tmpDir, 'artifact.tar.gz');
+    buildTarFromDir(stagingDir, innerTarPath, { gzip: true });
+
+    // Compute SHA256 of inner payload
+    const sha256 = sha256FileHex(innerTarPath);
+    process.stderr.write(`[artifacts] payload sha256: ${sha256}\n`);
+
+    // Build outer tar (uncompressed) with hash + inner tar.gz (named data)
+    const outerDir = path.join(tmpDir, 'outer');
+    fs.mkdirSync(outerDir, { recursive: true });
+    const hashFilePath = path.join(outerDir, 'hash');
+    fs.writeFileSync(hashFilePath, sha256 + '\n', 'utf-8');
+    fs.copyFileSync(innerTarPath, path.join(outerDir, 'data'));
+    const outerTarPath = path.join(tmpDir, 'artifact.tar');
+    buildTarFromDir(outerDir, outerTarPath, { gzip: false });
+    const sizeBytes = fs.statSync(outerTarPath).size;
+
+    // Output to ./<ARTIFACTS_DIR>/<sha256>
+    const artifactsDir = path.resolve(ARTIFACTS_DIR);
+    fs.mkdirSync(artifactsDir, { recursive: true });
+    const filename = sha256;
+    const finalPath = path.join(artifactsDir, filename);
+
+    if (fs.existsSync(finalPath)) {
+      process.stderr.write(`[artifacts] artifact already exists: ${filename}\n`);
+    } else {
+      fs.copyFileSync(outerTarPath, finalPath);
+      process.stderr.write(`[artifacts] created: ${ARTIFACTS_DIR}/${filename}\n`);
+    }
+
+    // Output result
+    process.stdout.write(
+      JSON.stringify(
+        {
+          ok: true,
+          version: args.version,
+          sha256,
+          filename,
+          sizeBytes,
+          modules: resolvedModules.map((m) => m.name),
+          path: `${ARTIFACTS_DIR}/${filename}`,
+        },
+        null,
+        2
+      ) + '\n'
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 main().catch((err) => {
