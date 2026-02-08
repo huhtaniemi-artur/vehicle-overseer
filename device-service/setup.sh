@@ -1,0 +1,44 @@
+#!/bin/sh
+set -eu
+
+log() { printf '[device-setup] %s\n' "$*" >&2; }
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="${VO_APP_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+SYSTEMD_DIR=/etc/systemd/system
+UNIT_SRC="$SCRIPT_DIR/systemd/vehicle-overseer.service"
+UNIT_DST="$SYSTEMD_DIR/vehicle-overseer.service"
+
+# Ensure service.py is available at the app root for manual execution.
+if [ -f "$SCRIPT_DIR/service.py" ]; then
+	cp "$SCRIPT_DIR/service.py" "$APP_DIR/service.py"
+	chmod 0755 "$APP_DIR/service.py"
+fi
+
+NO_SYSTEMD=0
+if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+	NO_SYSTEMD=1
+	log "systemd not running; will copy unit file but skip systemctl"
+fi
+
+if [ ! -f "$UNIT_SRC" ]; then
+	log "missing unit template: $UNIT_SRC"
+	exit 2
+fi
+
+if [ ! -d "$SYSTEMD_DIR" ]; then
+	log "missing systemd directory: $SYSTEMD_DIR"
+	exit 2
+fi
+
+cp "$UNIT_SRC" "$UNIT_DST"
+chmod 0644 "$UNIT_DST"
+
+if [ "$NO_SYSTEMD" -eq 0 ]; then
+	systemctl daemon-reload || log "warn: systemctl daemon-reload failed"
+	systemctl enable --now vehicle-overseer.service || log "warn: failed to enable vehicle-overseer.service"
+else
+	log "systemd unavailable; unit file copied but not enabled"
+fi
+
+log "ok"

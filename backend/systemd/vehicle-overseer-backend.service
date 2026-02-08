@@ -1,0 +1,18 @@
+[Unit]
+Description=Vehicle Overseer Backend (Node.js server)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vehicle-overseer/backend
+EnvironmentFile=-/etc/vehicle-overseer/backend.env
+#ExecStart=/usr/bin/node /opt/vehicle-overseer/backend/src/index.js
+ExecStart=/opt/vehicle-overseer/backend/vehicle-overseer-backend
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -10,9 +10,16 @@ SYSTEMD_DIR=/etc/systemd/system
 UPDATER_SERVICE_NAME=vehicle-overseer-updater.service
 UPDATER_TIMER_NAME=vehicle-overseer-updater.timer
 
-if ! command -v systemctl >/dev/null 2>&1; then
-  log "systemctl not found (systemd required)"
-  exit 2
+# Ensure updater.py is available at app root for direct execution.
+if [ -f "$SCRIPT_DIR/updater.py" ]; then
+  cp "$SCRIPT_DIR/updater.py" "$APP_DIR/updater.py"
+  chmod 0755 "$APP_DIR/updater.py"
+fi
+
+NO_SYSTEMD=0
+if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+  NO_SYSTEMD=1
+  log "systemd not running; will copy unit files but skip systemctl"
 fi
 
 src_dir=""
@@ -43,7 +50,11 @@ else
   log "warn: missing updater.timer in $src_dir"
 fi
 
-systemctl daemon-reload || log "warn: systemctl daemon-reload failed"
-systemctl enable --now "$UPDATER_TIMER_NAME" || log "warn: failed to enable $UPDATER_TIMER_NAME"
+if [ "$NO_SYSTEMD" -eq 0 ]; then
+  systemctl daemon-reload || log "warn: systemctl daemon-reload failed"
+  systemctl enable --now "$UPDATER_TIMER_NAME" || log "warn: failed to enable $UPDATER_TIMER_NAME"
+else
+  log "systemd unavailable; unit files copied but not enabled"
+fi
 
 log "ok"

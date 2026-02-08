@@ -8,8 +8,7 @@ PRAGMA foreign_keys = OFF;
 
 -- Artifact store: server stores package bytes by content hash (artifact id).
 CREATE TABLE IF NOT EXISTS artifacts (
-  id TEXT PRIMARY KEY, -- artifact id (currently: sha256 hex)
-  sha256 TEXT NOT NULL UNIQUE,
+  id TEXT PRIMARY KEY, -- artifact id (SHA256 hex from hash file inside tarball)
   filename TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))

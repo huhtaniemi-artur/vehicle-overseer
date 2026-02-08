@@ -24,11 +24,7 @@ Quick start
 Notes
 - Per-vehicle commands should be stored outside the repo.
 
-Artifacts (make vs import)
-- `make` creates an artifact tarball (`.tar.gz`) from a directory (or accepts an existing tarball). This does not touch the backend DB.
-- `import` publishes that artifact into the backend runtime state (copies bytes into `backend/data/artifacts/<sha256>` and updates SQLite tables).
-
-Local (developer machine)
-- Make (path implies `make`): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz`
-- Import into local backend workspace: `node updater/artifacts.js import ./artifact_v0.1.0.tar.gz --version v0.1.0`
-- Combined (make + import into local backend workspace): `node updater/artifacts.js ./release-dir --version v0.1.0 --out ./artifact_v0.1.0.tar.gz --import`
+Artifacts
+- Build (from backend/): `node ../updater/artifacts.js <version> --module <path> [--module <path>]...` writes a hash-named artifact (outer tar with `hash` + `data`) into `data/artifacts/<hash>` and prints the hash.
+- Sync DB: `node src/index.js artifacts refresh` (adds/removes artifacts on disk and updates versions/latest in SQLite).
+- Server (SEA dist): copy the hash-named file into `data/artifacts/` then run `./vehicle-overseer-backend artifacts refresh`, or import directly: `./vehicle-overseer-backend artifacts import /path/to/<artifact-hash>`.

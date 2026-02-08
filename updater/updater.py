@@ -11,7 +11,9 @@ Backend endpoints used:
 - GET  /api/device/artifacts/<artifact-id>
 
 Security note:
-- The artifact bytes are decrypted, SHA256 is computed over the plaintext, and the result is compared to `manifest.artifact.sha256` (mismatch aborts the update).
+- the artifact bytes are decrypted
+- the inner tar.gz hash is checked against the packaged `hash` file from the outer tar
+- and the download size is validated when provided.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 
 def log(msg: str) -> None:
@@ -73,6 +76,25 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _read_tar_member_bytes(tar_path: str, member_name: str, mode: str = "r:*") -> bytes | None:
+    with tarfile.open(tar_path, mode) as tar:
+        try:
+            member = tar.getmember(member_name)
+        except KeyError:
+            return None
+        name = member.name
+        if name.startswith("/") or name.startswith("\\"):
+            raise ValueError(f"unsafe tar path: {name!r}")
+        norm = os.path.normpath(name)
+        if norm.startswith("..") or os.path.isabs(norm):
+            raise ValueError(f"unsafe tar path: {name!r}")
+        if not member.isfile():
+            raise ValueError(f"unexpected tar member type for {name!r}")
+        fh = tar.extractfile(member)
+        if fh is None:
+            return None
+        return fh.read()
+
 def _read_state(path: str) -> dict | None:
     raw = _read_text(path)
     if not raw:
@@ -115,8 +137,8 @@ def _decrypt_aes_256_ctr(ciphertext: bytes, key: bytes, iv_hex: str) -> bytes:
     return proc.stdout
 
 
-def _safe_extract_tar(tar_path: str, dest_dir: str) -> None:
-    with tarfile.open(tar_path, "r:gz") as tar:
+def _safe_extract_tar(tar_path: str, dest_dir: str, mode: str = "r:gz") -> None:
+    with tarfile.open(tar_path, mode) as tar:
         for member in tar.getmembers():
             name = member.name
             if name.startswith("/") or name.startswith("\\"):
@@ -158,23 +180,6 @@ def _run_update_script(app_dir: str, env: dict[str, str]) -> None:
         raise RuntimeError(f"{UPDATE_SCRIPT_NAME} failed (exit {proc.returncode})")
 
 
-def _replace_self(app_dir: str) -> None:
-    # Allow artifacts to ship updater updates.
-    candidate = os.path.join(app_dir, "updater.py")
-    if not os.path.isfile(candidate):
-        return
-    current_path = os.path.realpath(sys.argv[0])
-    try:
-        if os.path.samefile(candidate, current_path):
-            return
-    except FileNotFoundError:
-        pass
-    tmp_path = f"{current_path}.tmp"
-    shutil.copy2(candidate, tmp_path)
-    os.replace(tmp_path, current_path)
-    log(f"updated updater: {current_path}")
-
-
 def cmd_apply(args: argparse.Namespace) -> int:
     backend = args.backend.rstrip("/")
     install_root = args.install_root
@@ -199,23 +204,42 @@ def cmd_apply(args: argparse.Namespace) -> int:
     manifest_uid = urllib.parse.quote(device_uid, safe="")
     manifest_url = f"{backend}/api/device/manifest?uid={manifest_uid}"
     log(f"fetch manifest: {manifest_url}")
-    manifest = _http_get_json(manifest_url)
+    try:
+        manifest = _http_get_json(manifest_url)
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            body = ""
+        msg = f"HTTP {exc.code}" + (f" {exc.reason}" if exc.reason else "")
+        log(f"{msg}: {body}" if body else msg)
+        if exc.code == 404:
+            return 0
+        raise
 
     version = manifest.get("version")
-    artifact = manifest.get("artifact") or {}
+    artifact = manifest.get("artifact")
+    if not version or not artifact:
+        log("no artifact assigned for device")
+        return 0
+
     artifact_url = artifact.get("url")
-    artifact_sha256 = artifact.get("sha256")
+    artifact_id = artifact.get("id")
+    artifact_size_bytes = artifact.get("sizeBytes")
     if not isinstance(version, str) or not version:
         raise ValueError("manifest missing version")
     if not isinstance(artifact_url, str) or not artifact_url:
         raise ValueError("manifest missing artifact.url")
-    if not isinstance(artifact_sha256, str) or not artifact_sha256:
-        raise ValueError("manifest missing artifact.sha256")
+    if not isinstance(artifact_id, str) or not artifact_id:
+        raise ValueError("manifest missing artifact.id")
+    if artifact_size_bytes is not None and not isinstance(artifact_size_bytes, int):
+        artifact_size_bytes = None
 
     state_path = os.path.join(install_root, "state.json")
     state = _read_state(state_path)
-    if not args.force and state and state.get("artifactSha256") == artifact_sha256:
-        log(f"artifact {artifact_sha256} already installed; skipping")
+    current_artifact_id = state.get("artifactId") if state else None
+    if not args.force and current_artifact_id == artifact_id:
+        log(f"artifact {artifact_id} already installed; skipping")
         return 0
 
     full_artifact_url = urllib.parse.urljoin(f"{backend}/", artifact_url.lstrip("/"))
@@ -232,20 +256,40 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if not iv:
         raise ValueError("encrypted artifact missing X-VO-Iv")
     blob = _decrypt_aes_256_ctr(blob, artifact_key, iv.strip())
-    got_sha256 = _sha256_hex(blob)
-    if got_sha256 != artifact_sha256:
-        raise ValueError(f"artifact sha256 mismatch: expected {artifact_sha256}, got {got_sha256}")
+    if artifact_size_bytes is not None and len(blob) != artifact_size_bytes:
+        raise ValueError(
+            f"artifact size mismatch: expected {artifact_size_bytes}, got {len(blob)}"
+        )
 
     tmp_dir = tempfile.mkdtemp(prefix="vo-updater-")
     try:
-        tar_path = os.path.join(tmp_dir, "artifact.tar.gz")
-        with open(tar_path, "wb") as f:
+        outer_tar_path = os.path.join(tmp_dir, "artifact.tar")
+        with open(outer_tar_path, "wb") as f:
             f.write(blob)
+
+        # Read packaged hash and inner payload (outer tar contains ./hash and ./data).
+        hash_file_bytes = _read_tar_member_bytes(outer_tar_path, "./hash", "r:*")
+        if not hash_file_bytes:
+            raise ValueError("artifact missing hash file")
+        inner_bytes = _read_tar_member_bytes(outer_tar_path, "./data", "r:*")
+        if not inner_bytes:
+            raise ValueError("artifact missing data file")
+
+        hash_file_val = hash_file_bytes.decode("utf-8", errors="replace").strip()
+        inner_sha = _sha256_hex(inner_bytes)
+        if inner_sha != hash_file_val:
+            raise ValueError(
+                f"artifact hash mismatch: payload {inner_sha}, hash file {hash_file_val}"
+            )
+
+        inner_tar_path = os.path.join(tmp_dir, "artifact.tar.gz")
+        with open(inner_tar_path, "wb") as f:
+            f.write(inner_bytes)
 
         extract_dir = os.path.join(tmp_dir, "extract")
         os.makedirs(extract_dir, exist_ok=True)
         log("extract artifact")
-        _safe_extract_tar(tar_path, extract_dir)
+        _safe_extract_tar(inner_tar_path, extract_dir, "r:gz")
         if not os.path.isfile(os.path.join(extract_dir, UPDATE_SCRIPT_NAME)):
             raise ValueError(f"{UPDATE_SCRIPT_NAME} missing from artifact")
 
@@ -268,7 +312,6 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
             if os.path.isdir(backup_dir):
                 shutil.rmtree(backup_dir, ignore_errors=True)
-            _replace_self(app_dir)
         except Exception:
             log("warn: update failed; attempting rollback")
             if os.path.isdir(app_dir):
@@ -280,7 +323,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         state = {
             "uid": device_uid,
             "version": version,
-            "artifactSha256": artifact_sha256,
+            "artifactId": artifact_id,
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         _write_text(os.path.join(install_root, "state.json"), json.dumps(state, indent=2) + "\n")
@@ -320,4 +363,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:  # show a clean fatal message instead of a Python trace
+        log(f"error: {exc}")
+        sys.exit(1)

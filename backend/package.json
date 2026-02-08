@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
+    "artifacts": "node ../updater/artifacts.js",
     "build:sea": "node build_sea.mjs",
     "clean:dist": "rm -rf dist"
   },
