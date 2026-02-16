@@ -117,8 +117,6 @@ function saveDbAtomic(db, dbPath) {
 }
 
 function upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode }) {
-  if (!createdAt) throw new Error('createdAt required for artifact');
-
   if (mode === 'refresh') {
     run(
       `INSERT OR IGNORE INTO artifacts (id, filename, size_bytes, created_at, inserted_at)
@@ -128,7 +126,6 @@ function upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode }) {
     return;
   }
 
-  // import: replace artifact metadata with provided created_at
   run(
     `INSERT OR REPLACE INTO artifacts (id, filename, size_bytes, created_at, inserted_at)
      VALUES ($id, $fn, $sz, $ca, datetime('now'))`,
@@ -137,50 +134,55 @@ function upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode }) {
 }
 
 function upsertArtifactAndVersion(run, mode, id, version, filename, sizeBytes, createdAt, options = {}) {
-  if (!version) return { versionInserted: false, conflictInfo: null };
-
-  const { getRow = null, force = false } = options;
+  const { force = false } = options;
   let conflictInfo = null;
+  let versionInserted = false;
 
-  if (mode === 'import' && typeof getRow === 'function') {
-    const existingVersion = getRow('SELECT artifact_id FROM versions WHERE version = $v LIMIT 1', { $v: version });
-    if (existingVersion && String(existingVersion.artifact_id) !== String(id)) {
-      const existingArtifact = getRow('SELECT id, size_bytes, created_at FROM artifacts WHERE id = $id LIMIT 1', {
-        $id: existingVersion.artifact_id
-      });
-      conflictInfo = existingArtifact
-        ? {
-            existingId: String(existingArtifact.id),
-            existingSize: Number(existingArtifact.size_bytes),
-            existingCreatedAt: String(existingArtifact.created_at)
-          }
-        : { existingId: String(existingVersion.artifact_id), existingSize: null, existingCreatedAt: null };
-      if (!force) {
-        throw new Error(
-          `version ${version} already mapped to artifact ${conflictInfo.existingId}; use --force to overwrite`
-        );
+  switch (mode) {
+    case 'refresh':
+      upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode });
+      run(
+        `INSERT INTO versions (version, artifact_id, notes)
+         VALUES ($v, $id, NULL)`,
+        { $v: version, $id: id }
+      );
+      versionInserted = true;
+      break;
+
+    case 'import':
+      const existingVersionRows = run('SELECT artifact_id FROM versions WHERE version = $v LIMIT 1', { $v: version });
+      const existingVersion = existingVersionRows?.[0];
+      if (existingVersion && String(existingVersion.artifact_id) !== String(id)) {
+        const existingArtifactRows = run('SELECT id, size_bytes, created_at FROM artifacts WHERE id = $id LIMIT 1', {
+          $id: existingVersion.artifact_id
+        });
+        const existingArtifact = existingArtifactRows?.[0];
+        conflictInfo = existingArtifact
+          ? {
+              existingId: String(existingArtifact.id),
+              existingSize: Number(existingArtifact.size_bytes),
+              existingCreatedAt: String(existingArtifact.created_at)
+            }
+          : { existingId: String(existingVersion.artifact_id), existingSize: null, existingCreatedAt: null };
+        if (!force) {
+          return null;
+        }
       }
-    }
+
+      upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode: 'import' });
+      run(
+        `INSERT OR REPLACE INTO versions (version, artifact_id, notes)
+         VALUES ($v, $id, NULL)`,
+        { $v: version, $id: id }
+      );
+      versionInserted = true;
+      break;
+
+    default:
+      throw new Error(`unknown mode for upsertArtifactAndVersion: ${mode}`);
   }
 
-  if (mode === 'refresh') {
-    upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode });
-    run(
-      `INSERT INTO versions (version, artifact_id, notes)
-       VALUES ($v, $id, NULL)`,
-      { $v: version, $id: id }
-    );
-    return { versionInserted: true, conflictInfo };
-  }
-
-  // import: upsert artifact + version
-  upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode: 'import' });
-  run(
-    `INSERT OR REPLACE INTO versions (version, artifact_id, notes)
-     VALUES ($v, $id, NULL)`,
-    { $v: version, $id: id }
-  );
-  return { versionInserted: true, conflictInfo };
+  return { versionInserted, conflictInfo };
 }
 
 function updateLatest(db) {
@@ -255,34 +257,38 @@ async function cmdImport({ rootDir, config, filePath, force }) {
 
   const db = openDb({ SQL, dbPath, schemaSql });
 
-  const getRow = (sql, params = {}) => {
-    const stmt = db.prepare(sql);
-    stmt.bind(params);
-    const has = stmt.step();
-    const row = has ? stmt.getAsObject() : null;
-    stmt.free();
-    return row;
-  };
-
   const run = (sql, params = {}) => {
+    // process.stderr.write('run('+sql+') -> ' + JSON.stringify(params) + '\n');
     const stmt = db.prepare(sql);
     stmt.bind(params);
-    stmt.step();
+    const rows = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject());
+    }
     stmt.free();
+    return rows.length ? rows : undefined;
   };
 
   run('BEGIN');
   let conflictInfo = null;
-  try {
-    const result = upsertArtifactAndVersion(run, 'import', id, version, filename, sizeBytes, date, { getRow, force });
-    conflictInfo = result?.conflictInfo ?? null;
-    updateLatest(db);
-
-    run('COMMIT');
-  } catch (err) {
+  let versionInserted = false;
+  let upsertResult = upsertArtifactAndVersion(run, 'import', id, version, filename, sizeBytes, date, { force });
+  if (upsertResult === null) {
+    // Conflict, not forced
     try { run('ROLLBACK'); } catch { /* ignore */ }
-    throw err;
+    const msg = `version ${version} already mapped to artifact (use --force to overwrite)`;
+    process.stderr.write(msg + '\n');
+    process.stdout.write(
+      JSON.stringify({ ok: false, mode: 'import', id, filename, version, sizeBytes, conflict: true, message: msg }, null, 2) + '\n'
+    );
+    return 0;
+  } else {
+    versionInserted = upsertResult.versionInserted;
+    conflictInfo = upsertResult.conflictInfo;
   }
+
+  updateLatest(db);
+  run('COMMIT');
 
   saveDbAtomic(db, dbPath);
 
@@ -301,8 +307,6 @@ async function cmdImport({ rootDir, config, filePath, force }) {
 
 async function cmdRefresh({ rootDir, config }) {
   const dbPath = path.resolve(rootDir, config.dbPath);
-  const artifactsDir = path.resolve(rootDir, ARTIFACTS_DIR);
-
   const schemaPath = path.resolve(rootDir, 'schema.sql');
   const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
 
@@ -317,27 +321,19 @@ async function cmdRefresh({ rootDir, config }) {
   const db = openDb({ SQL, dbPath, schemaSql });
 
   const run = (sql, params = {}) => {
-    const stmt = db.prepare(sql);
-    stmt.bind(params);
-    stmt.step();
-    stmt.free();
-  };
-
-  const getRows = (sql, params = {}) => {
+    // process.stderr.write('run('+sql+') -> ' + JSON.stringify(params) + '\n');
     const stmt = db.prepare(sql);
     stmt.bind(params);
     const rows = [];
-    while (stmt.step()) rows.push(stmt.getAsObject());
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject());
+    }
     stmt.free();
-    return rows;
-  };
-
-  const getRow = (sql, params = {}) => {
-    const rows = getRows(sql, params);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length ? rows : undefined;
   };
 
   // Scan disk - read id from hash file inside each artifact
+  const artifactsDir = path.resolve(rootDir, ARTIFACTS_DIR);
   const diskArtifacts = new Map();
   if (!fs.existsSync(artifactsDir)) {
     process.stderr.write(`[refresh] artifacts dir missing; treating as empty: ${artifactsDir}\n`);
@@ -361,7 +357,7 @@ async function cmdRefresh({ rootDir, config }) {
     diskArtifacts.set(id, { path: filePath, filename, sizeBytes: st.size, version, createdAt: date, status: 'new' });
   }
 
-  const dbArtifacts = getRows('SELECT id, filename FROM artifacts');
+  const dbArtifacts = run('SELECT id, filename FROM artifacts') || [];
   const dbIds = new Set(dbArtifacts.map((row) => String(row.id)));
 
   let added = 0;
@@ -395,11 +391,11 @@ async function cmdRefresh({ rootDir, config }) {
 
     // Populate versions from VERSION files
     const existingVersions = new Map();
-    const versionRows = getRows(
+    const versionRows = run(
       `SELECT v.version AS version, v.artifact_id AS artifact_id, a.size_bytes AS size_bytes, a.created_at AS created_at
        FROM versions v
        LEFT JOIN artifacts a ON a.id = v.artifact_id`
-    );
+    ) || [];
     for (const row of versionRows) {
       const version = String(row.version);
       if (version === 'latest') continue;
