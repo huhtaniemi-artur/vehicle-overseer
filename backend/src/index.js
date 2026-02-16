@@ -49,6 +49,54 @@ async function main() {
 
   const config = loadConfig();
 
+  const locateSqlFile = (file) => {
+    const packaged = fs.existsSync(path.join(rootDir, file));
+    if (packaged) return path.join(rootDir, file);
+    return path.join(rootDir, 'node_modules', 'sql.js', 'dist', file);
+  };
+
+  const ensureArtifactsInsertedAtColumn = async () => {
+    const SQL = await initSqlJs({ locateFile: locateSqlFile });
+    const dbPathResolved = path.resolve(rootDir, config.dbPath || './data/vehicle_overseer.sqlite');
+    const schemaPath = path.resolve(rootDir, 'schema.sql');
+    const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
+    const db = fs.existsSync(dbPathResolved)
+      ? new SQL.Database(fs.readFileSync(dbPathResolved))
+      : new SQL.Database();
+    db.run(schemaSql);
+    let hasInsertedAt = false;
+    const stmt = db.prepare('PRAGMA table_info(artifacts)');
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      if (String(row.name) === 'inserted_at') {
+        hasInsertedAt = true;
+        break;
+      }
+    }
+    stmt.free();
+    if (!hasInsertedAt) {
+      db.run(`ALTER TABLE artifacts ADD COLUMN inserted_at TEXT NOT NULL DEFAULT ''`);
+      db.run(
+        `UPDATE artifacts
+         SET inserted_at = COALESCE(created_at, datetime('now'))
+         WHERE inserted_at IS NULL OR inserted_at = ''`
+      );
+      const data = db.export();
+      fs.mkdirSync(path.dirname(dbPathResolved), { recursive: true });
+      const tmp = `${dbPathResolved}.tmp-${process.pid}-${Date.now()}`;
+      fs.writeFileSync(tmp, Buffer.from(data));
+      fs.renameSync(tmp, dbPathResolved);
+      console.log('[db] added artifacts.inserted_at');
+    }
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+  };
+
+  await ensureArtifactsInsertedAtColumn();
+
   // CLI mode: manage artifacts without starting the server.
   // This is used in SEA dist so the server can import artifacts without Node installed.
   const argv = process.argv.slice(2);
@@ -68,6 +116,7 @@ async function main() {
   fs.mkdirSync(dataDir, { recursive: true });
 
   // Initialize sql.js database (portable SQLite)
+  /*
   const SQL = await initSqlJs({
     locateFile: (file) => {
       // sql.js needs sql-wasm.wasm. In dev it lives in node_modules; in packaged builds it must be
@@ -77,6 +126,8 @@ async function main() {
       return path.join(rootDir, 'node_modules', 'sql.js', 'dist', file);
     }
   });
+  */
+  const SQL = await initSqlJs({ locateFile: locateSqlFile });
   const dbPath = path.resolve(rootDir, config.dbPath || './data/vehicle_overseer.sqlite');
   let db;
   if (fs.existsSync(dbPath)) {
@@ -254,10 +305,11 @@ async function main() {
     if (version === 'latest') version = null;
     if (!version) {
       const latest = getRow(
-        `SELECT version
-         FROM versions
-         WHERE version != 'latest'
-         ORDER BY datetime(created_at) DESC, version DESC
+        `SELECT v.version AS version
+         FROM versions v
+         JOIN artifacts a ON a.id = v.artifact_id
+         WHERE v.version != 'latest'
+         ORDER BY datetime(a.created_at) DESC, v.version DESC
          LIMIT 1`,
         {}
       );
@@ -270,7 +322,7 @@ async function main() {
          a.id AS artifactId,
          a.filename AS filename,
          a.size_bytes AS size_bytes,
-         v.created_at AS created_at
+         a.created_at AS created_at
        FROM versions v
        JOIN artifacts a ON a.id = v.artifact_id
        WHERE v.version = $version

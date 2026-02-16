@@ -11,14 +11,14 @@ CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY, -- artifact id (SHA256 hex from hash file inside tarball)
   filename TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL,
+  inserted_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Version tags mapped to an artifact id (package file, e.g. .tar.gz).
 CREATE TABLE IF NOT EXISTS versions (
   version TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
   notes TEXT,
   FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE RESTRICT
 );
