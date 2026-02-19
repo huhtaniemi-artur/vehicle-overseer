@@ -252,9 +252,9 @@ async function cmdImport({ rootDir, config, filePath, force }) {
 
   const db = openDb({ SQL, dbPath, schemaSql });
 
-  const run = (sql, params = {}) => {
-    // process.stderr.write('run('+sql+') -> ' + JSON.stringify(params) + '\n');
-    const stmt = db.prepare(sql);
+  const run = (sqlquery, params = {}) => {
+    // process.stdout.write('run('+sqlquery+') -> ' + JSON.stringify(params) + '\n');
+    const stmt = db.prepare(sqlquery);
     stmt.bind(params);
     const rows = [];
     while (stmt.step()) {
@@ -315,9 +315,9 @@ async function cmdRefresh({ rootDir, config }) {
 
   const db = openDb({ SQL, dbPath, schemaSql });
 
-  const run = (sql, params = {}) => {
-    // process.stderr.write('run('+sql+') -> ' + JSON.stringify(params) + '\n');
-    const stmt = db.prepare(sql);
+  const run = (sqlquery, params = {}) => {
+    // process.stdout.write('run('+sqlquery+') -> ' + JSON.stringify(params) + '\n');
+    const stmt = db.prepare(sqlquery);
     stmt.bind(params);
     const rows = [];
     while (stmt.step()) {
