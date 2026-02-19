@@ -185,28 +185,23 @@ function upsertArtifactAndVersion(run, mode, id, version, filename, sizeBytes, c
   return { versionInserted, conflictInfo };
 }
 
-function updateLatest(db) {
+function updateLatest(run) {
   // Maintain synthetic 'latest' using artifact created_at, falling back to version desc.
-  const newestStmt = db.prepare(
+  const rows = run(
     `SELECT v.version AS version, v.artifact_id AS artifact_id
-     FROM versions v
-     JOIN artifacts a ON a.id = v.artifact_id
+     FROM versions v JOIN artifacts a ON a.id = v.artifact_id
      WHERE v.version != 'latest'
      ORDER BY datetime(a.created_at) DESC, v.version DESC
      LIMIT 1`
   );
-  const hasNewest = newestStmt.step();
-  const newest = hasNewest ? newestStmt.getAsObject() : null;
-  newestStmt.free();
+  process.stdout.write('rows -> ' + JSON.stringify(rows) + '\n');
+  const newest = rows?.length ? rows[0] : {};
   if (!newest?.version || !newest?.artifact_id) return;
-
-  const upsert = db.prepare(
+  run(
     `INSERT OR REPLACE INTO versions (version, artifact_id, notes)
-     VALUES ('latest', $id, NULL)`
+     VALUES ('latest', $id, NULL)`,
+    { $id: newest.artifact_id }
   );
-  upsert.bind({ $id: newest.artifact_id });
-  upsert.step();
-  upsert.free();
 }
 
 async function cmdImport({ rootDir, config, filePath, force }) {
@@ -287,7 +282,7 @@ async function cmdImport({ rootDir, config, filePath, force }) {
     conflictInfo = upsertResult.conflictInfo;
   }
 
-  updateLatest(db);
+  updateLatest(run);
   run('COMMIT');
 
   saveDbAtomic(db, dbPath);
@@ -437,7 +432,7 @@ async function cmdRefresh({ rootDir, config }) {
       }
     }
 
-    updateLatest(db);
+    updateLatest(run);
 
     run('COMMIT');
   } catch (err) {
