@@ -334,7 +334,6 @@ async function cmdRefresh({ rootDir, config }) {
   if (!fs.existsSync(artifactsDir)) {
     process.stderr.write(`[refresh] artifacts dir missing; treating as empty: ${artifactsDir}\n`);
   }
-
   const entriesOnDisk = fs.existsSync(artifactsDir) ? fs.readdirSync(artifactsDir) : [];
   for (const filename of entriesOnDisk) {
     const filePath = path.join(artifactsDir, filename);
@@ -350,11 +349,19 @@ async function cmdRefresh({ rootDir, config }) {
       continue;
     }
     const { version, date } = readVersionAndDateFromArtifact(filePath);
+    // process.stderr.write(`${id} -> ${version} ${date}\n`);
+
+    if (!version || !date) {
+      process.stderr.write(`[refresh] warn: no VERSION found in ${id}\n`);
+    }
     diskArtifacts.set(id, { path: filePath, filename, sizeBytes: st.size, version, createdAt: date, status: 'new' });
   }
 
-  const dbArtifacts = run('SELECT id, filename FROM artifacts') || [];
+  // get list of artifacts from DB
+  const dbArtifacts = run('SELECT id FROM artifacts') || [];
   const dbIds = new Set(dbArtifacts.map((row) => String(row.id)));
+
+  // process.stdout.write('dbArtifacts -> ' + JSON.stringify(dbArtifacts) + '\n');
 
   let added = 0;
   let removed = 0;
@@ -372,64 +379,53 @@ async function cmdRefresh({ rootDir, config }) {
       }
     }
 
-    // Add/update DB entries for disk files
-    for (const [id, info] of diskArtifacts.entries()) {
-      const isNew = !dbIds.has(id);
-      upsertArtifact(run, { id, filename: info.filename, sizeBytes: info.sizeBytes, createdAt: info.createdAt, mode: 'refresh' });
-      if (isNew) {
-        process.stderr.write(`[refresh] added artifact: ${id}\n`);
-        info.status = 'inserted';
-        added++;
-      } else {
-        info.status = 'present';
-      }
-    }
-
-    // Populate versions from VERSION files
-    const existingVersions = new Map();
     const versionRows = run(
       `SELECT v.version AS version, v.artifact_id AS artifact_id, a.size_bytes AS size_bytes, a.created_at AS created_at
-       FROM versions v
-       LEFT JOIN artifacts a ON a.id = v.artifact_id`
+       FROM versions v LEFT JOIN artifacts a ON a.id = v.artifact_id
+       WHERE v.version != 'latest'`
     ) || [];
-    for (const row of versionRows) {
-      const version = String(row.version);
-      if (version === 'latest') continue;
-      existingVersions.set(version, {
-        artifactId: String(row.artifact_id),
-        sizeBytes: Number(row.size_bytes),
-        createdAt: String(row.created_at)
-      });
-    }
+    process.stdout.write('versionRows -> ' + JSON.stringify(versionRows, null, 2) + '\n');
+
+    const existingVersions = new Map(versionRows.map(row => [row.version, {
+      artifactId: row.artifact_id,
+      sizeBytes: row.size_bytes,
+      createdAt: row.created_at
+    }]));
 
     for (const [id, info] of diskArtifacts.entries()) {
       if (!info.version || !info.createdAt) {
-        process.stderr.write(`[refresh] warn: no VERSION found in ${id}\n`);
         info.status = 'no_version';
         continue;
       }
-
+      const isNewArtifact = !dbIds.has(id);
       const existingEntry = existingVersions.get(info.version);
-      if (existingEntry) {
-        if (String(existingEntry.artifactId) === String(id)) {
-          continue;
-        }
-        const diskDateStr = info.createdAt || 'unknown';
+      if (isNewArtifact && existingEntry) {
         process.stderr.write(
-          `[refresh] version ${info.version} conflict - disk: ${id} (size ${info.sizeBytes} bytes, date ${diskDateStr}), db: ${existingEntry.artifactId} (size ${existingEntry.sizeBytes} bytes, date ${existingEntry.createdAt})\n`
+          `[refresh] warn: conflict version ${info.version}  - disk: ${id} (size ${info.sizeBytes} bytes, date ${info.createdAt}), db: ${existingEntry.artifactId} (size ${existingEntry.sizeBytes} bytes, date ${existingEntry.createdAt})\n`
         );
         info.status = 'version_conflict';
         continue;
       }
 
-      const { versionInserted } = upsertArtifactAndVersion(
-        run, 'refresh', id, info.version, info.filename, info.sizeBytes, info.createdAt
-      );
-      if (versionInserted) {
-        existingVersions?.set(info.version, {
-          artifactId: String(id), sizeBytes: Number(info.sizeBytes), createdAt: info.createdAt,
-        });
-        process.stderr.write(`[refresh] added version: ${info.version} -> ${id}\n`);
+      if (isNewArtifact) {
+        process.stderr.write(`[refresh] added artifact: ${id}\n`);
+      }
+
+      if (isNewArtifact) {
+        const { versionInserted } = upsertArtifactAndVersion(
+          run, 'refresh', id, info.version, info.filename, info.sizeBytes, info.createdAt
+        );
+        if (versionInserted) {
+          existingVersions?.set(info.version, {
+            artifactId: id, sizeBytes: info.sizeBytes, createdAt: info.createdAt,
+          });
+
+          added++;
+          info.status = 'inserted';
+          process.stderr.write(`[refresh] added artifact ${id} -> version${info.version}\n`);
+        }
+      } else {
+        info.status = 'present';
       }
     }
 
@@ -445,8 +441,6 @@ async function cmdRefresh({ rootDir, config }) {
 
   // Build artifacts output with status from diskArtifacts + skipped items
   const artifacts = [];
-
-  // Add all processed artifacts from diskArtifacts
   for (const [id, info] of diskArtifacts.entries()) {
     const result = {
       id,
