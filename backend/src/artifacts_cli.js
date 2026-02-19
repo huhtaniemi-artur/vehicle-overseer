@@ -116,20 +116,29 @@ function saveDbAtomic(db, dbPath) {
   fs.renameSync(tmp, dbPath);
 }
 
-function upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode }) {
-  if (mode === 'refresh') {
-    run(
-      `INSERT OR IGNORE INTO artifacts (id, filename, size_bytes, created_at, inserted_at)
-       VALUES ($id, $fn, $sz, $ca, datetime('now'))`,
-      { $id: id, $fn: filename, $sz: sizeBytes, $ca: createdAt }
-    );
-    return;
-  }
+function updateArtifact(run, { id, filename, sizeBytes, createdAt, version }) {
+  run(
+    `INSERT OR IGNORE INTO artifacts (id, filename, size_bytes, created_at, inserted_at)
+     VALUES ($id, $fn, $sz, $ca, datetime('now'))`,
+    { $id: id, $fn: filename, $sz: sizeBytes, $ca: createdAt }
+  );
+  run(
+    `INSERT OR IGNORE INTO versions (version, artifact_id, notes)
+     VALUES ($v, $id, NULL)`,
+    { $v: version, $id: id }
+  );
+}
 
+function upsertArtifact(run, { id, filename, sizeBytes, createdAt, version }) {
   run(
     `INSERT OR REPLACE INTO artifacts (id, filename, size_bytes, created_at, inserted_at)
      VALUES ($id, $fn, $sz, $ca, datetime('now'))`,
     { $id: id, $fn: filename, $sz: sizeBytes, $ca: createdAt }
+  );
+  run(
+    `INSERT OR REPLACE INTO versions (version, artifact_id, notes)
+      VALUES ($v, $id, NULL)`,
+    { $v: version, $id: id }
   );
 }
 
@@ -140,12 +149,7 @@ function upsertArtifactAndVersion(run, mode, id, version, filename, sizeBytes, c
 
   switch (mode) {
     case 'refresh':
-      upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode });
-      run(
-        `INSERT INTO versions (version, artifact_id, notes)
-         VALUES ($v, $id, NULL)`,
-        { $v: version, $id: id }
-      );
+      updateArtifact(run, { id, filename, sizeBytes, createdAt, version });
       versionInserted = true;
       break;
 
@@ -169,12 +173,8 @@ function upsertArtifactAndVersion(run, mode, id, version, filename, sizeBytes, c
         }
       }
 
-      upsertArtifact(run, { id, filename, sizeBytes, createdAt, mode: 'import' });
-      run(
-        `INSERT OR REPLACE INTO versions (version, artifact_id, notes)
-         VALUES ($v, $id, NULL)`,
-        { $v: version, $id: id }
-      );
+      upsertArtifact(run, { id, filename, sizeBytes, createdAt, version });
+
       versionInserted = true;
       break;
 
@@ -203,6 +203,7 @@ function updateLatest(run) {
     { $id: newest.artifact_id }
   );
 }
+
 
 async function cmdImport({ rootDir, config, filePath, force }) {
   const resolvedFile = path.resolve(filePath);
