@@ -36,6 +36,7 @@ async function main() {
     deviceActionPort: 9000,
     deviceLogPort: 9100,
     devicePingIntervalS: 10,
+    offlineReentryThresholdS: 30,
     ipList: []
   };
 
@@ -238,7 +239,8 @@ async function main() {
     deviceActionPort: deviceActionPort ?? null,
     deviceLogPort: deviceLogPort ?? null,
     devicePingIntervalS,
-    offlineTimeoutMs: OFFLINE_TIMEOUT_MS
+    offlineTimeoutMs: OFFLINE_TIMEOUT_MS,
+    offlineReentryThresholdS: config.offlineReentryThresholdS
   });
 
   const safeName = (value, label) => {
@@ -343,7 +345,8 @@ async function main() {
     lastUpdate: entry.lastUpdate,
     status: computeStatus(entry),
     lastError: entry.lastError || null,
-    stage: entry.stage || null
+    stage: entry.stage || null,
+    onlineSince: entry.onlineSince || null
   });
 
   // WebSocket broadcast helper
@@ -602,6 +605,10 @@ async function main() {
         }
         const now = Date.now();
         const existing = entries.get(uid) || {};
+        let onlineSince = existing.onlineSince || now;
+        if (now - existing.lastUpdate >= config.offlineReentryThresholdS * 1000) {
+          onlineSince = now;
+        }
         const entry = {
           ...existing,
           uid,
@@ -613,7 +620,8 @@ async function main() {
           // POST pings are independent of actions; do not accept action results here.
           lastError: existing.lastError,
           stage: existing.stage,
-          lastUpdate: now
+          lastUpdate: now,
+          onlineSince
         };
         entries.set(uid, entry);
         broadcast({ type: 'entry', entry: serializeEntry(entry) });

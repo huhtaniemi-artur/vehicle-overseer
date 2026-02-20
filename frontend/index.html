@@ -251,7 +251,7 @@
     }
 
     function formatLastSeenDate(tsMs) {
-      return new Date(tsMs).toLocaleString(undefined, {
+      return new Date(tsMs).toLocaleString("fi-FI", {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -268,7 +268,11 @@
         const e = entries.get(uid);
         if (!e) return;
         lastSeenEl.textContent = formatAge(now - e.lastUpdate);
-        lastSeenEl.title = formatLastSeenDate(e.lastUpdate);
+        if (e.status === 'online') {
+          lastSeenEl.title = 'online since ' + formatLastSeenDate(e.onlineSince);
+        } else {
+          lastSeenEl.title = 'last seen ' + formatLastSeenDate(e.lastUpdate);
+        }
       });
     }
     setInterval(updateLastSeenTick, 1000);
@@ -318,7 +322,11 @@
       node.titleEl.innerHTML = `<strong>${displayName}</strong> — ${entry.ip || 'n/a'} · `;
       node.titleEl.appendChild(node.lastSeenEl);
       node.lastSeenEl.textContent = formatAge(getServerNow() - entry.lastUpdate);
-      node.lastSeenEl.title = formatLastSeenDate(entry.lastUpdate);
+      if (entry.status === 'online') {
+        node.lastSeenEl.title = 'online since ' + formatLastSeenDate(entry.onlineSince);
+      } else {
+        node.lastSeenEl.title = 'last seen ' + formatLastSeenDate(entry.lastUpdate);
+      }
       const stageMsg = entry.stage || '';
       node.ipBtn.textContent = entry.selectedIp || 'select mqtt';
       node.ipBtn.disabled = false;
