@@ -595,6 +595,29 @@ async function main() {
       return res.end(JSON.stringify({ entries: list }));
     }
 
+    // Clear all entries
+    if (pathname === '/api/entries/clear' && req.method === 'POST') {
+      entries.clear();
+      // Broadcast removal to all clients (send empty init)
+      broadcast({ type: 'init', entries: [], config: getClientConfig(), serverNow: Date.now() });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true }));
+    }
+
+    // Delete single entry
+    if (pathname.startsWith('/api/entries/') && req.method === 'DELETE') {
+      const uid = decodeURIComponent(pathname.split('/').pop());
+      if (!entries.has(uid)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'entry not found' }));
+      }
+      entries.delete(uid);
+      // Broadcast removal to all clients (send delete message)
+      broadcast({ type: 'delete', uid });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true }));
+    }
+
     if (pathname === '/api/ping' && req.method === 'POST') {
       try {
         const payload = await parseJson(req);

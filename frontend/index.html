@@ -19,6 +19,7 @@
     .muted { color: #6b7280; font-size: 14px; }
     button { padding: 8px 12px; border-radius: 8px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; }
     button.primary { background: var(--green); color: #fff; border: none; }
+    button.danger { background: var(--red); color: #fff; border: none; }
     .pill-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px; border: 1px solid #d1d5db; background: #eef2f7; cursor: pointer; }
     .pill-btn:hover { background: #e2e8f0; }
     select { padding: 8px; border-radius: 8px; border: 1px solid #d1d5db; }
@@ -170,6 +171,7 @@
       </div>
       <div class="muted">Backend base URL</div>
       <input id="backend-input" type="text" placeholder="http://localhost:3100" />
+      <button id="clear-all-btn" class="danger" style="margin-top:12px;">Clear all devices</button>
     </div>
   </div>
 
@@ -200,6 +202,7 @@
     const settingsClose = document.getElementById('settings-close');
     const backendInput = document.getElementById('backend-input');
     const setBackendBtn = document.getElementById('set-backend-btn');
+    const clearAllBtn = document.getElementById('clear-all-btn');
     const selectOverlay = document.getElementById('select-overlay');
     const selectPanel = document.getElementById('select-panel');
     const selectList = document.getElementById('select-list');
@@ -224,6 +227,25 @@
       const res = await fetch(url);
       if (!res.ok) throw new Error(await res.text());
       return res.json();
+    }
+
+    function removeEntryLocal(uid) {
+      entries.delete(uid);
+      const node = entryNodes.get(uid);
+      if (node?.root?.parentElement) node.root.parentElement.removeChild(node.root);
+      entryNodes.delete(uid);
+      updateStatus();
+    }
+
+    async function deleteEntry(uid) {
+      const res = await fetch(new URL(`/api/entries/${encodeURIComponent(uid)}`, backendBase), { method: 'DELETE' });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        alert(`Delete failed: ${res.status} ${msg}`);
+        return;
+      }
+      // Optimistic local removal; other clients update via WS broadcast.
+      removeEntryLocal(uid);
     }
 
     function updateStatus() {
@@ -281,6 +303,7 @@
       const div = document.createElement('div');
       const classes = ['entry', entry.status];
       div.className = classes.join(' ');
+      div.style.touchAction = 'pan-y';
 
       const headerRow = document.createElement('div');
       headerRow.className = 'row';
@@ -312,6 +335,63 @@
       statusRow.style.marginTop = '6px';
       statusRow.appendChild(statusEl);
       div.appendChild(statusRow);
+
+      // Swipe-to-delete: drag entry left/right past threshold.
+      let swipeStartX = 0;
+      let swipeStartY = 0;
+      let swiping = false;
+      let swipeDx = 0;
+      const SWIPE_START_PX = 12;
+      const SWIPE_TRIGGER_PX = 120;
+
+      const resetSwipe = () => {
+        div.style.transition = 'transform 160ms ease-out';
+        div.style.transform = 'translateX(0px)';
+        setTimeout(() => { div.style.transition = ''; }, 180);
+        swiping = false;
+        swipeDx = 0;
+      };
+
+      div.addEventListener('pointerdown', (ev) => {
+        const t = ev.target;
+        if (t && (t.tagName === 'BUTTON' || t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
+        swipeStartX = ev.clientX;
+        swipeStartY = ev.clientY;
+        swiping = false;
+        swipeDx = 0;
+        div.setPointerCapture(ev.pointerId);
+      });
+
+      div.addEventListener('pointermove', (ev) => {
+        if (!div.hasPointerCapture(ev.pointerId)) return;
+        const dx = ev.clientX - swipeStartX;
+        const dy = ev.clientY - swipeStartY;
+        if (!swiping) {
+          if (Math.abs(dx) < SWIPE_START_PX) return;
+          if (Math.abs(dx) < Math.abs(dy)) return; // likely vertical scroll
+          swiping = true;
+        }
+        swipeDx = dx;
+        div.style.transform = `translateX(${dx}px)`;
+      });
+
+      div.addEventListener('pointerup', (ev) => {
+        if (!div.hasPointerCapture(ev.pointerId)) return;
+        div.releasePointerCapture(ev.pointerId);
+        if (swiping && Math.abs(swipeDx) >= SWIPE_TRIGGER_PX) {
+          const dir = swipeDx >= 0 ? 1 : -1;
+          div.style.transition = 'transform 140ms ease-out';
+          div.style.transform = `translateX(${dir * 420}px)`;
+          setTimeout(() => { deleteEntry(entry.uid); }, 150);
+          return;
+        }
+        resetSwipe();
+      });
+
+      div.addEventListener('pointercancel', (ev) => {
+        if (div.hasPointerCapture(ev.pointerId)) div.releasePointerCapture(ev.pointerId);
+        resetSwipe();
+      });
 
       return { root: div, lastSeenEl, statusEl, ipBtn, logBtn, controls, titleEl: title };
     }
@@ -491,6 +571,10 @@
           }, 500);
           upsertEntry(merged);
         }
+
+        if (msg.type === 'delete') {
+          if (msg.uid) removeEntryLocal(msg.uid);
+        }
       };
       ws.onclose = () => {
         setTimeout(connectUpdates, 2000);
@@ -520,6 +604,17 @@
         upsertEntry(e, { initialInsert: true });
       });
       connectUpdates();
+    }
+
+    if (clearAllBtn) {
+      clearAllBtn.onclick = async () => {
+        if (!confirm('Clear all devices from server?')) return;
+        const res = await fetch(new URL('/api/entries/clear', backendBase), { method: 'POST' });
+        if (!res.ok) {
+          const msg = await res.text().catch(() => '');
+          alert(`Clear failed: ${res.status} ${msg}`);
+        }
+      };
     }
 
     function closeLogs() {
