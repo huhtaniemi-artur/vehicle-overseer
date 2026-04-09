@@ -26,6 +26,8 @@ frontend/node_modules/
 *.swp
 *.swo
 .DS_Store
+*.code-workspace
 
 # Local config
 backend/config.json
+backend/dist/*
